@@ -1,5 +1,15 @@
 import streamlit as st
 
+# 1. წინასწარ ვრეგისტრაციებთ გვერდებს (სწორი გზით)
+designers_page = st.Page("pages/1_Designers.py", title="დიზაინერები", icon="🧑‍🎨")
+orders_page = st.Page("pages/2_Orders.py", title="შეკვეთები", icon="🛒")
+
+# 2. როდესაც ღილაკს აჭერ, ვიყენებთ სრულფასოვან გვერდის ობიექტს
+if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_des"):
+    # ვცვლით st.switch_page-ს სწორი მიმართებით ან პირდაპირ ვრთავთ navigation-ით
+    # უახლეს ვერსიებში switch_page იღებს st.Page ობიექტს ან სწორ მითითებას:
+    st.switch_page(designers_page)
+
 st.set_page_config(
     page_title="Op-Art - მართვის სისტემა",
     page_icon="🛋️",
