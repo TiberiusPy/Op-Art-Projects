@@ -7,13 +7,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# 2. ვარეგისტრირებთ გვერდებს st.Page-ით
-designers_page = st.Page("pages/1_Designers.py", title="დიზაინერები", icon="🧑‍🎨")
-orders_page = st.Page("pages/2_Orders.py", title="შეკვეთები", icon="🛒")
-
-# ვქმნით ნავიგაციის ობიექტს (position="hidden" მალავს გვერდითა სტანდარტულ მენიუს, რომ მხოლოდ ჩვენი ღილაკები იმუშაოს)
-nav = st.navigation([designers_page, orders_page], position="hidden")
-
 # 🎨 თანამედროვე, დახვეწილი CSS სტილები
 st.markdown("""
     <style>
@@ -78,8 +71,7 @@ with col1:
             <p>დიზაინერების ხელფასები, პროექტები, დაკონტრაქტების % და რეესტრი.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_designers_action"):
-        st.switch_page(designers_page)
+    st.page_link("pages/1_Designers.py", label="გადასვლა: დიზაინერები", icon="🚀")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -90,7 +82,7 @@ with col1:
             <p>წარმოების პროცესები, ვადები და შესრულებული სამუშაოები.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: წარმოება", use_container_width=True, key="btn_prod_action"):
+    if st.button("🚀 გადასვლა: წარმოება", use_container_width=True, key="btn_prod"):
         st.info("მალე დაემატება...")
 
 with col2:
@@ -101,8 +93,7 @@ with col2:
             <p>მომხმარებელთა შეკვეთები, სტატუსები და დეტალები.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: შეკვეთები", use_container_width=True, key="btn_orders_action"):
-        st.switch_page(orders_page)
+    st.page_link("pages/2_Orders.py", label="გადასვლა: შეკვეთები", icon="🚀")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -113,7 +104,7 @@ with col2:
             <p>მონტაჟის გრაფიკები, ბრიგადები და ჩაბარება.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: მონტაჟი", use_container_width=True, key="btn_inst_action"):
+    if st.button("🚀 გადასვლა: მონტაჟი", use_container_width=True, key="btn_inst"):
         st.info("მალე დაემატება...")
 
 with col3:
@@ -124,7 +115,7 @@ with col3:
             <p>კონსტრუქტორების დატვირთვა და პროექტების მართვა.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: კონსტრუქტორები", use_container_width=True, key="btn_const_action"):
+    if st.button("🚀 გადასვლა: კონსტრუქტორები", use_container_width=True, key="btn_const"):
         st.info("მალე დაემატება...")
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -136,11 +127,8 @@ with col3:
             <p>ერთიანი ფინანსური უწყისი, ხელფასები და ანგარიშგება.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: ბუღალტერია", use_container_width=True, key="btn_acc_action"):
+    if st.button("🚀 გადასვლა: ბუღალტერია", use_container_width=True, key="btn_acc"):
         st.info("მალე დაემატება...")
 
 st.markdown("<hr style='margin-top: 50px;'>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #94A3B8; font-size: 14px;'>© 2026 Op-Art. ყველა უფლება დაცულია.</p>", unsafe_allow_html=True)
-
-# ვრთავთ ნავიგაციას გვერდის ბოლოში
-nav.run()
