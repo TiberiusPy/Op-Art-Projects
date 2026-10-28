@@ -1,25 +1,23 @@
 import streamlit as st
 
-# 1. წინასწარ ვრეგისტრაციებთ გვერდებს (სწორი გზით)
-designers_page = st.Page("pages/1_Designers.py", title="დიზაინერები", icon="🧑‍🎨")
-orders_page = st.Page("pages/2_Orders.py", title="შეკვეთები", icon="🛒")
-
-# 2. როდესაც ღილაკს აჭერ, ვიყენებთ სრულფასოვან გვერდის ობიექტს
-if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_des"):
-    # ვცვლით st.switch_page-ს სწორი მიმართებით ან პირდაპირ ვრთავთ navigation-ით
-    # უახლეს ვერსიებში switch_page იღებს st.Page ობიექტს ან სწორ მითითებას:
-    st.switch_page(designers_page)
-
+# 1. გვერდის კონფიგურაცია აუცილებლად თავში უნდა იყოს
 st.set_page_config(
     page_title="Op-Art - მართვის სისტემა",
     page_icon="🛋️",
     layout="wide"
 )
 
+# 2. წინასწარ ვრეგისტრაციებთ გვერდებს
+designers_page = st.Page("pages/1_Designers.py", title="დიზაინერები", icon="🧑‍🎨")
+orders_page = st.Page("pages/2_Orders.py", title="შეკვეთები", icon="🛒")
+
+# ვრთავთ დამალულ ნავიგაციას, რომ st.switch_page გამართულად ამოქმედდეს
+pg = st.navigation([designers_page, orders_page], position="hidden")
+pg.run()
+
 # 🎨 თანამედროვე, დახვეწილი CSS სტილები
 st.markdown("""
     <style>
-        /* მთავარი სათაურის გარანტირებული გადიდება */
         .custom-main-title {
             font-size: 48px !important;
             font-weight: 900 !important;
@@ -32,8 +30,6 @@ st.markdown("""
             color: #475569 !important;
             margin-bottom: 35px !important;
         }
-
-        /* ბარათების (Cards) პრემიუმ დიზაინი */
         .card {
             background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);
             border: 1px solid #E2E8F0;
@@ -48,8 +44,6 @@ st.markdown("""
             box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
             border-color: #94A3B8;
         }
-
-        /* ბარათის შიგნით სათაურები და ტექსტები */
         .card h3 {
             color: #1E293B;
             font-size: 22px;
@@ -61,8 +55,6 @@ st.markdown("""
             line-height: 1.5;
             min-height: 45px;
         }
-
-        /* ჰორიზონტალური ხაზი */
         hr {
             margin-top: 10px;
             margin-bottom: 30px;
@@ -71,30 +63,24 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# მთავარი გადიდებული სათაური ძლიერი HTML ტეგით
-st.markdown('<h1 class="custom-main-title">🛋️ Op-Art - კომპანიის მართვის ერთიანი სისტემა (ERP)</h1>',
-            unsafe_allow_html=True)
-st.markdown('<p class="custom-sub-text">მოგესალმებით! გთხოვთ აირჩიოთ სასურველი სამუშაო მიმართულება სისტემაში:</p>',
-            unsafe_allow_html=True)
+st.markdown('<h1 class="custom-main-title">🛋️ Op-Art - კომპანიის მართვის ერთიანი სისტემა (ERP)</h1>', unsafe_allow_html=True)
+st.markdown('<p class="custom-sub-text">მოგესალმებით! გთხოვთ აირჩიოთ სასურველი სამუშაო მიმართულება სისტემაში:</p>', unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# 6 მიმართულება გადანაწილებული 3 თანაბარ სვეტში
 col1, col2, col3 = st.columns(3, gap="large")
 
 with col1:
-    # 1. დიზაინერები
     st.markdown("""
         <div class="card">
             <h3>🧑‍🎨 დიზაინერები</h3>
             <p>დიზაინერების ხელფასები, პროექტები, დაკონტრაქტების % და რეესტრი.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_des"):
-        st.switch_page("pages/1_Designers.py")
+    if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_designers"):
+        st.switch_page(designers_page)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 4. წარმოება
     st.markdown("""
         <div class="card">
             <h3>🏭 წარმოება</h3>
@@ -105,7 +91,6 @@ with col1:
         st.info("მალე დაემატება...")
 
 with col2:
-    # 2. მყიდველის შეკვეთები
     st.markdown("""
         <div class="card">
             <h3>🛒 მყიდველის შეკვეთები</h3>
@@ -113,11 +98,10 @@ with col2:
         </div>
     """, unsafe_allow_html=True)
     if st.button("🚀 გადასვლა: შეკვეთები", use_container_width=True, key="btn_orders"):
-        st.switch_page("pages/2_Orders.py")
+        st.switch_page(orders_page)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 5. მონტაჟი
     st.markdown("""
         <div class="card">
             <h3>🛠️ მონტაჟი</h3>
@@ -128,7 +112,6 @@ with col2:
         st.info("მალე დაემატება...")
 
 with col3:
-    # 3. კონსტრუქტორები
     st.markdown("""
         <div class="card">
             <h3>📐 კონსტრუქტორები</h3>
@@ -140,7 +123,6 @@ with col3:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 6. ბუღალტერია
     st.markdown("""
         <div class="card">
             <h3>📊 ბუღალტერია</h3>
@@ -151,5 +133,4 @@ with col3:
         st.info("მალე დაემატება...")
 
 st.markdown("<hr style='margin-top: 50px;'>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #94A3B8; font-size: 14px;'>© 2026 Op-Art. ყველა უფლება დაცულია.</p>",
-            unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #94A3B8; font-size: 14px;'>© 2026 Op-Art. ყველა უფლება დაცულია.</p>", unsafe_allow_html=True)
