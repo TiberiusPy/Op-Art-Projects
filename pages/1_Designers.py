@@ -27,7 +27,7 @@ if not st.session_state["authenticated_designer"]:
     st.stop()
 # ===================================================================
 
-# PostgreSQL ბაზასთან მიერთება (ლოკალური)
+# PostgreSQL ბაზასთან მიერთება
 DB_USER = "postgres"
 DB_PASS = "123qweASD"
 DB_HOST = "localhost"
@@ -102,7 +102,10 @@ def get_data():
             ("outsource_designer_name", "VARCHAR(150)"),
             ("outsource_contract_no", "VARCHAR(50)"),
             ("outsource_commission_pct", "NUMERIC DEFAULT 0.0"),
-            ("outsource_installments", "INTEGER DEFAULT 1")
+            ("outsource_installments", "INTEGER DEFAULT 1"),
+            ("project_category", "VARCHAR(50) DEFAULT 'ინდივიდუალური'"),
+            ("contract_file_data", "BYTEA"),
+            ("contract_file_name", "VARCHAR(255)")
         ]
         for col_name, col_type in new_columns:
             cur_check.execute(
@@ -137,7 +140,9 @@ def get_data():
         pass
 
     try:
-        df_projects = pd.read_sql("SELECT * FROM projects ORDER BY created_at DESC;", con=engine)
+        df_projects = pd.read_sql(
+            "SELECT id, contract_type, contract_no, project_category, client_name, amount, product_type, designer_name, saved_design_fee_pct, saved_commission_pct, created_at, project_source, delivery_date_str, outsource_designer_name, outsource_contract_no, outsource_commission_pct, outsource_installments, contract_file_name, (contract_file_data IS NOT NULL) AS has_file FROM projects ORDER BY created_at DESC;",
+            con=engine)
         df_designers = pd.read_sql("SELECT * FROM designers;", con=engine)
         df_managers = pd.read_sql("SELECT * FROM managers;", con=engine)
         df_products = pd.read_sql("SELECT * FROM product_types;", con=engine)
@@ -171,6 +176,7 @@ designer_options = [d for d in all_designers if d != "ია პირტახ�
 
 product_options = ["ავეჯი", "კარი"]
 contract_type_options = ["დიზაინი", "დაკონტრაქტება"]
+project_category_options = ["ინდივიდუალური", "კორპორატიული"]
 
 # ავტომატური რიგითი ხელშეკრულების ნომრის გენერაცია
 suggested_contract_no = "261001"
@@ -198,7 +204,9 @@ with tab1:
         with st.sidebar.form("add_form", clear_on_submit=True):
             contract_type = st.selectbox("ხელშეკრულების ტიპი", contract_type_options, index=None, placeholder="აირჩიე")
             contract_no = st.text_input("ხელშეკრულების №", value=suggested_contract_no)
-            client_name = st.text_input("დამკვეთის სახელი და გვარი")
+            project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=None,
+                                            placeholder="აირჩიე")
+            client_name = st.text_input("დამკვეთი")
 
             amount = st.number_input("ხელშეკრულების თანხა (₾)", min_value=0.0, step=100.0, value=0.0, format="%.2f")
 
@@ -213,7 +221,7 @@ with tab1:
             submit = st.form_submit_button("💾 შენახვა ბაზაში")
 
             if submit:
-                if not contract_type or not contract_no or not client_name or not product_type or not designer_name or amount <= 0:
+                if not contract_type or not contract_no or not project_category or not client_name or not product_type or not designer_name or amount <= 0:
                     st.sidebar.error("გთხოვთ, ბოლომდე შეავსეთ ყველა ველი!")
                 else:
                     try:
@@ -229,6 +237,7 @@ with tab1:
                         new_data = pd.DataFrame([{
                             "contract_type": contract_type,
                             "contract_no": contract_no.strip(),
+                            "project_category": project_category,
                             "client_name": client_name.strip(),
                             "amount": amount,
                             "product_type": product_type,
@@ -260,7 +269,9 @@ with tab1:
                                                          value=1, step=1)
 
                 contract_no = st.text_input("ხელშეკრულების №", value=suggested_contract_no)
-                client_name = st.text_input("დამკვეთის სახელი და გვარი")
+                project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=None,
+                                                placeholder="აირჩიე")
+                client_name = st.text_input("დამკვეთი")
                 amount = st.number_input("ხელშეკრულების თანხა (₾)", min_value=0.0, step=100.0, value=0.0, format="%.2f")
 
                 designer_name = st.selectbox("დიზაინერი", ["ია პირტახია"])
@@ -271,13 +282,14 @@ with tab1:
                 submit_outsource = st.form_submit_button("💾 შენახვა ბაზაში (Outsource)")
 
                 if submit_outsource:
-                    if not outsource_designer_name or not outsource_contract_no or not contract_no or not client_name or not product_type or amount <= 0:
+                    if not outsource_designer_name or not outsource_contract_no or not contract_no or not project_category or not client_name or not product_type or amount <= 0:
                         st.sidebar.error("გთხოვთ, ბოლომდე შეავსეთ ყველა ველი!")
                     else:
                         try:
                             new_data = pd.DataFrame([{
                                 "contract_type": "დაკონტრაქტება",
                                 "contract_no": contract_no.strip(),
+                                "project_category": project_category,
                                 "client_name": client_name.strip(),
                                 "amount": amount,
                                 "product_type": product_type,
@@ -309,7 +321,9 @@ with tab1:
                 contract_type = st.selectbox("ხელშეკრულების ტიპი", contract_type_options, index=None,
                                              placeholder="აირჩიე")
                 contract_no = st.text_input("ხელშეკრულების №", value=suggested_contract_no)
-                client_name = st.text_input("დამკვეთის სახელი და გვარი")
+                project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=None,
+                                                placeholder="აირჩიე")
+                client_name = st.text_input("დამკვეთი")
                 amount = st.number_input("ხელშეკრულების თანხა (₾)", min_value=0.0, step=100.0, value=0.0, format="%.2f")
 
                 if product_type == "კარი":
@@ -323,12 +337,13 @@ with tab1:
                 submit_outsource_nd = st.form_submit_button("💾 შენახვა ბაზაში (Outsource - დიზაინის გარეშე)")
 
                 if submit_outsource_nd:
-                    if not outsource_designer_name or not outsource_contract_no or not contract_type or not contract_no or not client_name or not product_type or not designer_name or amount <= 0:
+                    if not outsource_designer_name or not outsource_contract_no or not contract_type or not contract_no or not project_category or not client_name or not product_type or not designer_name or amount <= 0:
                         st.sidebar.error("გთხოვთ, ბოლომდე შეავსეთ ყველა ველი!")
                     else:
                         try:
-                            des_rec = designers_df[designers_df[
-                                                       'full_name'] == designer_name] if not designers_df.empty else pd.DataFrame()
+                            des_rec = designers_df[
+                                designers_df[
+                                    'full_name'] == designer_name] if not designers_df.empty else pd.DataFrame()
                             current_des_fee_pct = float(des_rec.iloc[0][
                                                             'design_fee_pct']) if not des_rec.empty and 'design_fee_pct' in des_rec.columns and pd.notnull(
                                 des_rec.iloc[0]['design_fee_pct']) else 0.50
@@ -339,6 +354,7 @@ with tab1:
                             new_data = pd.DataFrame([{
                                 "contract_type": contract_type,
                                 "contract_no": contract_no.strip(),
+                                "project_category": project_category,
                                 "client_name": client_name.strip(),
                                 "amount": amount,
                                 "product_type": product_type,
@@ -435,7 +451,7 @@ with tab1:
                                 salary_designer = (amt + design_amount) * designer_pct
                             else:
                                 salary_designer = ((amt + design_amount) * designer_pct) - (
-                                            design_amount * hist_des_fee)
+                                        design_amount * hist_des_fee)
                         else:
                             salary_designer = amt * designer_pct
 
@@ -502,7 +518,7 @@ with tab1:
         d_count_dict = {"სახელი და გვარი": "დიზაინი (რ-ბა)"}
         for m in all_months_sorted:
             cnt = len(furniture_calc_df[(furniture_calc_df['month_year'] == m) & (
-                        furniture_calc_df['contract_type'] == "დიზაინი")]) if not furniture_calc_df.empty else 0
+                    furniture_calc_df['contract_type'] == "დიზაინი")]) if not furniture_calc_df.empty else 0
             d_count_dict[m] = int(cnt)
 
         d_sum_dict = {"სახელი და გვარი": "დიზაინი (თანხა)"}
@@ -528,7 +544,7 @@ with tab1:
         c_count_dict = {"სახელი და გვარი": "დაკონტრაქტება (რ-ბა)"}
         for m in all_months_sorted:
             cnt = len(furniture_calc_df[(furniture_calc_df['month_year'] == m) & (
-                        furniture_calc_df['contract_type'] == "დაკონტრაქტება")]) if not furniture_calc_df.empty else 0
+                    furniture_calc_df['contract_type'] == "დაკონტრაქტება")]) if not furniture_calc_df.empty else 0
             c_count_dict[m] = int(cnt)
 
         c_sum_dict = {"სახელი და გვარი": "დაკონტრაქტება (თანხა)"}
@@ -556,7 +572,7 @@ with tab1:
             des_kpi_dict = {"სახელი და გვარი": f"{d} - დაკონტრაქტების %"}
             for m in all_months_sorted:
                 m_data = furniture_calc_df[(furniture_calc_df['month_year'] == m) & (
-                            furniture_calc_df['designer_name'] == d)] if not furniture_calc_df.empty else pd.DataFrame()
+                        furniture_calc_df['designer_name'] == d)] if not furniture_calc_df.empty else pd.DataFrame()
                 d_cnt = len(m_data[m_data['contract_type'] == "დიზაინი"]) if not m_data.empty else 0
                 c_cnt = len(m_data[m_data['contract_type'] == "დაკონტრაქტება"]) if not m_data.empty else 0
                 if d_cnt > 0:
@@ -601,18 +617,30 @@ with tab1:
 
         st.write("### 📋 ყველა შეყვანილი პროექტის დეტალური ბაზა და რეესტრი")
 
-        col_search1, col_search2, col_search3 = st.columns(3)
+        # 🔍 ფილტრაციის პანელი
+        col_search1, col_search2, col_search3, col_search4 = st.columns(4)
         with col_search1:
-            search_source = st.selectbox("🔍 ძებნა პროექტის წყაროთი", ["ყველა"] + df[
+            search_source = st.selectbox("🔍 ძებნა წყაროთი", ["ყველა"] + df[
                 'project_source'].unique().tolist() if 'project_source' in df.columns else ["ყველა"])
         with col_search2:
-            search_client = st.text_input("🔍 ძებნა დამკვეთის სახელით", value="")
+            search_cat = st.selectbox("🔍 ძებნა კატეგორიით", ["ყველა", "ინდივიდუალური", "კორპორატიული"])
         with col_search3:
+            search_client = st.text_input("🔍 ძებნა დამკვეთით", value="")
+        with col_search4:
             search_designer = st.text_input("🔍 ძებნა დიზაინერით", value="")
 
+        # 📅 თარიღის ფილტრი
+        col_date_filter, col_metric = st.columns([2, 1])
+        with col_date_filter:
+            date_range = st.date_input("📅 ფილტრი თარიღებით (საწყისი - საბოლოო)", value=())
+
         filtered_export_base = filtered_calc_df.copy()
+
+        # ფილტრების გატარება
         if search_source != "ყველა":
             filtered_export_base = filtered_export_base[filtered_export_base['project_source'] == search_source]
+        if search_cat != "ყველა":
+            filtered_export_base = filtered_export_base[filtered_export_base['project_category'] == search_cat]
         if search_client.strip():
             filtered_export_base = filtered_export_base[
                 filtered_export_base['client_name'].str.contains(search_client.strip(), case=False, na=False)]
@@ -620,25 +648,46 @@ with tab1:
             filtered_export_base = filtered_export_base[
                 filtered_export_base['designer_name'].str.contains(search_designer.strip(), case=False, na=False)]
 
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_date, end_date = date_range
+            filtered_export_base = filtered_export_base[
+                (filtered_export_base['created_at'].dt.date >= start_date) &
+                (filtered_export_base['created_at'].dt.date <= end_date)
+                ]
+
+        # 💰 ჯამური ნავაჭრის გამოჩენა
+        total_turnover = filtered_export_base['amount'].sum() if not filtered_export_base.empty else 0.0
+        with col_metric:
+            st.metric(label="💰 ჯამური ნავაჭრი (მოფილტრული)", value=f"{total_turnover:,.2f} ₾")
+
+        # ცხრილის მომზადება
+        filtered_export_base['file_status'] = filtered_export_base['has_file'].apply(
+            lambda x: "✅ ატვირთულია" if x else "❌ არ არის")
+
         detailed_export_df = filtered_export_base[
-            ['created_at', 'project_source', 'product_type', 'contract_type', 'contract_no', 'client_name', 'amount',
-             'designer_name', 'salary_designer', 'delivery_date_str']
+            ['id', 'created_at', 'project_source', 'product_type', 'contract_type', 'contract_no', 'project_category',
+             'client_name', 'amount',
+             'designer_name', 'salary_designer', 'delivery_date_str', 'file_status']
         ].copy() if not filtered_calc_df.empty else pd.DataFrame(
-            columns=['created_at', 'project_source', 'product_type', 'contract_type', 'contract_no', 'client_name',
-                     'amount', 'designer_name', 'salary_designer', 'delivery_date_str'])
+            columns=['id', 'created_at', 'project_source', 'product_type', 'contract_type', 'contract_no',
+                     'project_category', 'client_name',
+                     'amount', 'designer_name', 'salary_designer', 'delivery_date_str', 'file_status'])
 
         if not detailed_export_df.empty:
             detailed_export_df.columns = [
+                'ID',
                 'შექმნის თარიღი',
                 'პროექტის წყარო',
                 'პროდუქცია',
                 'ხელშეკრულების ტიპი',
                 'ხელშეკრულების №',
+                'პროექტის კატეგორია',
                 'დამკვეთი',
                 'თანხა',
                 'დიზაინერი',
                 'დიზაინერის ხელფასი',
-                'ჩაბარების თარიღი'
+                'ჩაბარების თარიღი',
+                'ფაილი'
             ]
             detailed_export_df.index = range(1, len(detailed_export_df) + 1)
 
@@ -648,6 +697,64 @@ with tab1:
         }, na_rep="-").set_properties(**{'text-align': 'right'})
 
         st.dataframe(styled_detailed, use_container_width=True)
+
+        # 📎 ხელშეკრულების ფაილის ატვირთვა / გადმოწერა
+        st.write("#### 📎 ხელშეკრულების ფაილის ატვირთვა / ჩამოტვირთვა")
+        if not detailed_export_df.empty:
+            col_doc1, col_doc2 = st.columns(2)
+            with col_doc1:
+                selected_proj_no = st.selectbox("აირჩიეთ ხელშეკრულების № ფაილის მართვისთვის",
+                                                detailed_export_df['ხელშეკრულების №'].tolist())
+                uploaded_file = st.file_uploader("ატვირთეთ ხელშეკრულების ფაილი (PDF, Word, PNG, JPG)",
+                                                 type=['pdf', 'docx', 'doc', 'png', 'jpg'])
+                if st.button("📤 ფაილის შენახვა"):
+                    if uploaded_file and selected_proj_no:
+                        file_bytes = uploaded_file.read()
+                        file_name = uploaded_file.name
+                        try:
+                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
+                                                    port=DB_PORT)
+                            cur = conn.cursor()
+                            cur.execute(
+                                "UPDATE projects SET contract_file_data = %s, contract_file_name = %s WHERE contract_no = %s",
+                                (psycopg2.Binary(file_bytes), file_name, selected_proj_no))
+                            conn.commit()
+                            cur.close()
+                            conn.close()
+                            st.success(f"ფაილი '{file_name}' წარმატებით მიება ხელშეკრულებას № {selected_proj_no}!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"შეცდომა ფაილის ატვირთვისას: {e}")
+                    else:
+                        st.warning("გთხოვთ აირჩიოთ ფაილი!")
+
+            with col_doc2:
+                if selected_proj_no:
+                    target_row = df[df['contract_no'] == selected_proj_no]
+                    if not target_row.empty and target_row.iloc[0]['has_file']:
+                        st.write(f"📄 **არსებული ფაილი:** {target_row.iloc[0]['contract_file_name']}")
+                        try:
+                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
+                                                    port=DB_PORT)
+                            cur = conn.cursor()
+                            cur.execute(
+                                "SELECT contract_file_data, contract_file_name FROM projects WHERE contract_no = %s",
+                                (selected_proj_no,))
+                            f_data, f_name = cur.fetchone()
+                            cur.close()
+                            conn.close()
+                            if f_data:
+                                st.download_button(
+                                    label=f"📥 გადმოწერა ({f_name})",
+                                    data=bytes(f_data),
+                                    file_name=f_name,
+                                    mime="application/octet-stream",
+                                    key=f"dl_file_{selected_proj_no}"
+                                )
+                        except Exception as e:
+                            st.error(f"შეცდომა ფაილის წამოღებისას: {e}")
+                    else:
+                        st.info("ამ ხელშეკრულებაზე ფაილი ჯერ ატვირთული არ არის.")
 
         csv_data_detailed = detailed_export_df.to_csv(index=True, sep=';').encode('utf-8-sig')
         st.download_button(
@@ -676,7 +783,13 @@ with tab2:
                                                curr_c_type) if curr_c_type in contract_type_options else 0)
 
             e_contract_no = st.text_input("ხელშეკრულების №", value=str(record_to_edit['contract_no']))
-            e_client = st.text_input("დამკვეთის სახელი და გვარი", value=str(record_to_edit['client_name']))
+
+            curr_category = record_to_edit.get('project_category', 'ინდივიდუალური')
+            e_project_category = st.selectbox("პროექტის კატეგორია", project_category_options,
+                                              index=project_category_options.index(
+                                                  curr_category) if curr_category in project_category_options else 0)
+
+            e_client = st.text_input("დამკვეთი", value=str(record_to_edit['client_name']))
 
             curr_prod = record_to_edit['product_type']
             e_product_type = st.selectbox("პროდუქცია", product_options,
@@ -714,9 +827,10 @@ with tab2:
                     cur = conn.cursor()
                     cur.execute("""
                         UPDATE projects 
-                        SET contract_type = %s, contract_no = %s, client_name = %s, product_type = %s, amount = %s, designer_name = %s, delivery_date_str = %s 
+                        SET contract_type = %s, contract_no = %s, project_category = %s, client_name = %s, product_type = %s, amount = %s, designer_name = %s, delivery_date_str = %s 
                         WHERE id = %s
-                    """, (e_contract_type, e_contract_no.strip(), e_client.strip(), e_product_type, e_amount,
+                    """, (e_contract_type, e_contract_no.strip(), e_project_category, e_client.strip(), e_product_type,
+                          e_amount,
                           e_designer, e_delivery_date_str, record_id))
                     conn.commit()
                     cur.close()
@@ -1068,7 +1182,7 @@ with tab4:
             outsource_display = outsource_df[[
                 'created_at', 'project_source', 'outsource_designer_name', 'outsource_contract_no',
                 'outsource_commission_pct', 'outsource_installments', 'product_type',
-                'contract_no', 'client_name', 'amount', 'delivery_date_str'
+                'contract_no', 'project_category', 'client_name', 'amount', 'delivery_date_str'
             ]].copy()
 
             outsource_display['outsource_commission_pct'] = outsource_display['outsource_commission_pct'].apply(
@@ -1076,7 +1190,7 @@ with tab4:
             outsource_display.columns = [
                 'შექმნის თარიღი', 'წყარო', 'Outsource დიზაინერი', 'Outsource ხელშეკრულების №',
                 'საკომისიო (%)', 'ნაწილების რ-ბა', 'პროდუქცია', 'ხელშეკრულების №',
-                'დამკვეთი', 'თანხა (₾)', 'ჩაბარების თარიღი'
+                'პროექტის კატეგორია', 'დამკვეთი', 'თანხა (₾)', 'ჩაბარების თარიღი'
             ]
             outsource_display.index = range(1, len(outsource_display) + 1)
 
