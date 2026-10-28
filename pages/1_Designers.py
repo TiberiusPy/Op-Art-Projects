@@ -160,6 +160,22 @@ def get_data():
 
 df, designers_df, managers_df, products_df, history_df, manager_history_df = get_data()
 
+# 🎨 Custom CSS ღილაკებისა და ბარათების კონტურების მართვისთვის
+st.markdown("""
+    <style>
+    .stButton > button {
+        border: 1px solid rgba(49, 51, 63, 0.2);
+        border-radius: 8px;
+        padding: 0.35rem 0.75rem;
+        transition: all 0.2s ease-in-out;
+    }
+    .stButton > button:hover {
+        border-color: #ff4b4b;
+        color: #ff4b4b;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🛋️ Op-Art - დიზაინერების ხელფასები და დეშბორდი")
 
 # მენიუ / ტაბები (4 ჩანართი)
@@ -253,7 +269,6 @@ with tab1:
                     except Exception as e:
                         st.sidebar.error(f"შეცდომა: {e}")
     else:
-        # Outsource არჩევისას
         outsource_design_type = st.sidebar.selectbox("დიზაინი", ["დიზაინით", "დიზაინის გარეშე"],
                                                      key="outsource_design_type_sel")
         product_type = st.sidebar.selectbox("პროდუქცია", product_options, index=None, placeholder="აირჩიე",
@@ -309,7 +324,6 @@ with tab1:
                         except Exception as e:
                             st.sidebar.error(f"შეცდომა: {e}")
         else:
-            # Outsource - დიზაინის გარეშე
             with st.sidebar.form("add_outsource_nodesign_form", clear_on_submit=True):
                 outsource_designer_name = st.text_input("Outsource დიზაინერის სახელი და გვარი")
                 outsource_contract_no = st.text_input("Outsource დიზაინერის ხელშეკრულების №")
@@ -461,7 +475,6 @@ with tab1:
 
         calc_df = pd.DataFrame(calculated_rows)
 
-        # ---------------- წლის ამორჩეველი ----------------
         col_title, col_year_sel, col_btn = st.columns([2, 1, 1])
         with col_title:
             st.subheader("📊 თვიური რეპორტი და ხელფასების უწყისი")
@@ -483,7 +496,6 @@ with tab1:
         month_names_eng = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         all_months_sorted = [f"{m}.{year_short}" for m in month_names_eng]
 
-        # ---------------- 1. დიზაინერების ცხრილი ----------------
         st.markdown("#### 🧑‍🎨 დიზაინერები (ხელფასები)")
         designers_data = []
         designers_to_show = [d for d in all_designers if d != "ია პირტახია"] + ["ია პირტახია"]
@@ -510,7 +522,6 @@ with tab1:
         st.dataframe(styled_des, use_container_width=True)
         st.write("")
 
-        # ---------------- 2. დიზაინის ინფორმაციის ცხრილები ----------------
         st.markdown("#### 🎨 დიზაინი")
         furniture_calc_df = filtered_calc_df[
             filtered_calc_df.get('product_type', '') != 'კარი'] if not filtered_calc_df.empty else pd.DataFrame()
@@ -538,7 +549,6 @@ with tab1:
         st.dataframe(styled_design, use_container_width=True)
         st.write("")
 
-        # ---------------- 3. დაკონტრაქტების ინფორმაციის ცხრილები ----------------
         st.markdown("#### 🤝 დაკონტრაქტება")
 
         c_count_dict = {"სახელი და გვარი": "დაკონტრაქტება (რ-ბა)"}
@@ -564,7 +574,6 @@ with tab1:
         st.dataframe(styled_contract, use_container_width=True)
         st.write("")
 
-        # ---------------- 4. დაკონტრაქტების % ----------------
         st.markdown("#### 📈 დაკონტრაქტების % (ინდივიდუალური და გუნდური)")
 
         kpi_rows = []
@@ -617,7 +626,6 @@ with tab1:
 
         st.write("### 📋 ყველა შეყვანილი პროექტის დეტალური ბაზა და რეესტრი")
 
-        # 🔍 ფილტრაციის პანელი
         col_search1, col_search2, col_search3, col_search4 = st.columns(4)
         with col_search1:
             search_source = st.selectbox("🔍 ძებნა წყაროთი", ["ყველა"] + df[
@@ -629,14 +637,12 @@ with tab1:
         with col_search4:
             search_designer = st.text_input("🔍 ძებნა დიზაინერით", value="")
 
-        # 📅 თარიღის ფილტრი
         col_date_filter, col_metric = st.columns([2, 1])
         with col_date_filter:
             date_range = st.date_input("📅 ფილტრი თარიღებით (საწყისი - საბოლოო)", value=())
 
         filtered_export_base = filtered_calc_df.copy()
 
-        # ფილტრების გატარება
         if search_source != "ყველა":
             filtered_export_base = filtered_export_base[filtered_export_base['project_source'] == search_source]
         if search_cat != "ყველა":
@@ -655,12 +661,10 @@ with tab1:
                 (filtered_export_base['created_at'].dt.date <= end_date)
                 ]
 
-        # 💰 ჯამური ნავაჭრის გამოჩენა
         total_turnover = filtered_export_base['amount'].sum() if not filtered_export_base.empty else 0.0
         with col_metric:
             st.metric(label="💰 ჯამური ნავაჭრი (მოფილტრული)", value=f"{total_turnover:,.2f} ₾")
 
-        # ცხრილის მომზადება
         filtered_export_base['file_status'] = filtered_export_base['has_file'].apply(
             lambda x: "✅ ატვირთულია" if x else "❌ არ არის")
 
@@ -698,16 +702,23 @@ with tab1:
 
         st.dataframe(styled_detailed, use_container_width=True)
 
-        # 📎 ხელშეკრულების ფაილის ატვირთვა / გადმოწერა
+        # 📎 ხელშეკრულების ფაილის ატვირთვა / გადმოწერა / წაშლა
         st.write("#### 📎 ხელშეკრულების ფაილის ატვირთვა / ჩამოტვირთვა")
         if not detailed_export_df.empty:
             col_doc1, col_doc2 = st.columns(2)
             with col_doc1:
                 selected_proj_no = st.selectbox("აირჩიეთ ხელშეკრულების № ფაილის მართვისთვის",
                                                 detailed_export_df['ხელშეკრულების №'].tolist())
+
+                # ვამოწმებთ სესიის ცვლადს ფაილის ველის გასასუფთავებლად
+                if "file_uploader_key" not in st.session_state:
+                    st.session_state["file_uploader_key"] = 0
+
                 uploaded_file = st.file_uploader("ატვირთეთ ხელშეკრულების ფაილი (PDF, Word, PNG, JPG)",
-                                                 type=['pdf', 'docx', 'doc', 'png', 'jpg'])
-                if st.button("📤 ფაილის შენახვა"):
+                                                 type=['pdf', 'docx', 'doc', 'png', 'jpg'],
+                                                 key=f"contract_file_uploader_{st.session_state['file_uploader_key']}")
+
+                if st.button("📤 ფაილის ატვირთვა"):
                     if uploaded_file and selected_proj_no:
                         file_bytes = uploaded_file.read()
                         file_name = uploaded_file.name
@@ -721,6 +732,10 @@ with tab1:
                             conn.commit()
                             cur.close()
                             conn.close()
+
+                            # ვცვლით გასაღებს, რომ ფაილის ასატვირთი ველი სრულად განულდეს
+                            st.session_state["file_uploader_key"] += 1
+
                             st.success(f"ფაილი '{file_name}' წარმატებით მიება ხელშეკრულებას № {selected_proj_no}!")
                             st.rerun()
                         except Exception as e:
@@ -751,6 +766,36 @@ with tab1:
                                     mime="application/octet-stream",
                                     key=f"dl_file_{selected_proj_no}"
                                 )
+
+                                # --- 🗑️ ფაილის წაშლის დასტურის მექანიზმი ---
+                                st.write("")
+                                with st.popover("🗑️ ფაილის წაშლა"):
+                                    st.warning("ნამდვილად გსურთ ატვირთული ფაილის წაშლა?")
+                                    col_del_yes, col_del_no = st.columns(2)
+
+                                    with col_del_yes:
+                                        if st.button("დიახ", key=f"yes_del_{selected_proj_no}"):
+                                            try:
+                                                conn_del = psycopg2.connect(dbname=DB_NAME, user=DB_USER,
+                                                                            password=DB_PASS, host=DB_HOST,
+                                                                            port=DB_PORT)
+                                                cur_del = conn_del.cursor()
+                                                cur_del.execute(
+                                                    "UPDATE projects SET contract_file_data = NULL, contract_file_name = NULL WHERE contract_no = %s",
+                                                    (selected_proj_no,))
+                                                conn_del.commit()
+                                                cur_del.close()
+                                                conn_del.close()
+                                                st.success("ფაილი წარმატებით წაიშალა!")
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"შეცდომა წაშლისას: {e}")
+
+                                    with col_del_no:
+                                        if st.button("არა", key=f"no_del_{selected_proj_no}"):
+                                            st.rerun()
+                                # --------------------------------------------
+
                         except Exception as e:
                             st.error(f"შეცდომა ფაილის წამოღებისას: {e}")
                     else:
