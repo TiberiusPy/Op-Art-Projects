@@ -1,19 +1,11 @@
 import streamlit as st
 
-# 1. გვერდის კონფიგურაცია აუცილებლად თავში უნდა იყოს
+# 1. გვერდის კონფიგურაცია
 st.set_page_config(
     page_title="Op-Art - მართვის სისტემა",
     page_icon="🛋️",
     layout="wide"
 )
-
-# 2. წინასწარ ვრეგისტრაციებთ გვერდებს
-designers_page = st.Page("pages/1_Designers.py", title="დიზაინერები", icon="🧑‍🎨")
-orders_page = st.Page("pages/2_Orders.py", title="შეკვეთები", icon="🛒")
-
-# ვრთავთ დამალულ ნავიგაციას, რომ st.switch_page გამართულად ამოქმედდეს
-pg = st.navigation([designers_page, orders_page], position="hidden")
-pg.run()
 
 # 🎨 თანამედროვე, დახვეწილი CSS სტილები
 st.markdown("""
@@ -37,12 +29,6 @@ st.markdown("""
             border-radius: 16px;
             box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
             margin-bottom: 15px;
-            transition: all 0.3s ease-in-out;
-        }
-        .card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-            border-color: #94A3B8;
         }
         .card h3 {
             color: #1E293B;
@@ -64,9 +50,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<h1 class="custom-main-title">🛋️ Op-Art - კომპანიის მართვის ერთიანი სისტემა (ERP)</h1>', unsafe_allow_html=True)
-st.markdown('<p class="custom-sub-text">მოგესალმებით! გთხოვთ აირჩიოთ სასურველი სამუშაო მიმართულება სისტემაში:</p>', unsafe_allow_html=True)
+st.markdown('<p class="custom-sub-text">მოგესალმებით! სისტემის გვერდებში გადასასვლელად გამოიყენეთ მარცხენა მენიუ (Sidebar).</p>', unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
+# 6 მიმართულება გადანაწილებული 3 თანაბარ სვეტში
 col1, col2, col3 = st.columns(3, gap="large")
 
 with col1:
@@ -76,10 +63,6 @@ with col1:
             <p>დიზაინერების ხელფასები, პროექტები, დაკონტრაქტების % და რეესტრი.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_designers"):
-        st.switch_page(designers_page)
-
-    st.markdown("<br>", unsafe_allow_html=True)
 
     st.markdown("""
         <div class="card">
@@ -87,8 +70,6 @@ with col1:
             <p>წარმოების პროცესები, ვადები და შესრულებული სამუშაოები.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: წარმოება", use_container_width=True, key="btn_prod"):
-        st.info("მალე დაემატება...")
 
 with col2:
     st.markdown("""
@@ -97,10 +78,6 @@ with col2:
             <p>მომხმარებელთა შეკვეთები, სტატუსები და დეტალები.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: შეკვეთები", use_container_width=True, key="btn_orders"):
-        st.switch_page(orders_page)
-
-    st.markdown("<br>", unsafe_allow_html=True)
 
     st.markdown("""
         <div class="card">
@@ -108,8 +85,6 @@ with col2:
             <p>მონტაჟის გრაფიკები, ბრიგადები და ჩაბარება.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: მონტაჟი", use_container_width=True, key="btn_inst"):
-        st.info("მალე დაემატება...")
 
 with col3:
     st.markdown("""
@@ -118,10 +93,6 @@ with col3:
             <p>კონსტრუქტორების დატვირთვა და პროექტების მართვა.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: კონსტრუქტორები", use_container_width=True, key="btn_const"):
-        st.info("მალე დაემატება...")
-
-    st.markdown("<br>", unsafe_allow_html=True)
 
     st.markdown("""
         <div class="card">
@@ -129,8 +100,6 @@ with col3:
             <p>ერთიანი ფინანსური უწყისი, ხელფასები და ანგარიშგება.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: ბუღალტერია", use_container_width=True, key="btn_acc"):
-        st.info("მალე დაემატება...")
 
 st.markdown("<hr style='margin-top: 50px;'>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #94A3B8; font-size: 14px;'>© 2026 Op-Art. ყველა უფლება დაცულია.</p>", unsafe_allow_html=True)
