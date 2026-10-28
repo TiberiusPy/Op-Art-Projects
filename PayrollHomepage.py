@@ -80,7 +80,7 @@ with col1:
         </div>
     """, unsafe_allow_html=True)
     if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_des"):
-        st.switch_page("Pages/1_Designers.py")
+        st.switch_page("pages/1_Designers.py")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -103,7 +103,7 @@ with col2:
         </div>
     """, unsafe_allow_html=True)
     if st.button("🚀 გადასვლა: შეკვეთები", use_container_width=True, key="btn_orders"):
-        st.switch_page("Pages/2_Orders.py")
+        st.switch_page("pages/2_Orders.py")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
