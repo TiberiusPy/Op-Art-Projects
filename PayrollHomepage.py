@@ -1,20 +1,15 @@
 import streamlit as st
 
-# 1. წინასწარ ვრეგისტრაციებთ გვერდებს (სწორი გზით)
-designers_page = st.Page("pages/1_Designers.py", title="დიზაინერები", icon="🧑‍🎨")
-orders_page = st.Page("pages/2_Orders.py", title="შეკვეთები", icon="🛒")
-
-# 2. როდესაც ღილაკს აჭერ, ვიყენებთ სრულფასოვან გვერდის ობიექტს
-if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_des"):
-    # ვცვლით st.switch_page-ს სწორი მიმართებით ან პირდაპირ ვრთავთ navigation-ით
-    # უახლეს ვერსიებში switch_page იღებს st.Page ობიექტს ან სწორ მითითებას:
-    st.switch_page(designers_page)
-
+# 1. გვერდის კონფიგურაცია აუცილებლად თავში უნდა იყოს
 st.set_page_config(
     page_title="Op-Art - მართვის სისტემა",
     page_icon="🛋️",
     layout="wide"
 )
+
+# 2. წინასწარ ვრეგისტრაციებთ გვერდებს
+designers_page = st.Page("pages/1_Designers.py", title="დიზაინერები", icon="🧑‍🎨")
+orders_page = st.Page("pages/2_Orders.py", title="შეკვეთები", icon="🛒")
 
 # 🎨 თანამედროვე, დახვეწილი CSS სტილები
 st.markdown("""
@@ -89,8 +84,8 @@ with col1:
             <p>დიზაინერების ხელფასები, პროექტები, დაკონტრაქტების % და რეესტრი.</p>
         </div>
     """, unsafe_allow_html=True)
-    if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_des"):
-        st.switch_page("pages/1_Designers.py")
+    if st.button("🚀 გადასვლა: დიზაინერები", use_container_width=True, key="btn_designers"):
+        st.switch_page(designers_page)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -113,7 +108,7 @@ with col2:
         </div>
     """, unsafe_allow_html=True)
     if st.button("🚀 გადასვლა: შეკვეთები", use_container_width=True, key="btn_orders"):
-        st.switch_page("pages/2_Orders.py")
+        st.switch_page(orders_page)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
