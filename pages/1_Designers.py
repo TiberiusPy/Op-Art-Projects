@@ -105,7 +105,8 @@ def get_data():
             ("outsource_installments", "INTEGER DEFAULT 1"),
             ("project_category", "VARCHAR(50) DEFAULT 'ინდივიდუალური'"),
             ("contract_file_data", "BYTEA"),
-            ("contract_file_name", "VARCHAR(255)")
+            ("contract_file_name", "VARCHAR(255)"),
+            ("project_status", "VARCHAR(30) DEFAULT 'მიმდინარე'")
         ]
         for col_name, col_type in new_columns:
             cur_check.execute(
@@ -141,7 +142,7 @@ def get_data():
 
     try:
         df_projects = pd.read_sql(
-            "SELECT id, contract_type, contract_no, project_category, client_name, amount, product_type, designer_name, saved_design_fee_pct, saved_commission_pct, created_at, project_source, delivery_date_str, outsource_designer_name, outsource_contract_no, outsource_commission_pct, outsource_installments, contract_file_name, (contract_file_data IS NOT NULL) AS has_file FROM projects ORDER BY created_at DESC;",
+            "SELECT id, project_status, contract_type, contract_no, project_category, client_name, amount, product_type, designer_name, saved_design_fee_pct, saved_commission_pct, created_at, project_source, delivery_date_str, outsource_designer_name, outsource_contract_no, outsource_commission_pct, outsource_installments, contract_file_name, (contract_file_data IS NOT NULL) AS has_file FROM projects ORDER BY created_at DESC;",
             con=engine)
         df_designers = pd.read_sql("SELECT * FROM designers;", con=engine)
         df_managers = pd.read_sql("SELECT * FROM managers;", con=engine)
@@ -160,6 +161,13 @@ def get_data():
 
 
 df, designers_df, managers_df, products_df, history_df, manager_history_df = get_data()
+
+# ძველ ჩანაწერებს, რომლებსაც სტატუსი არ აქვს, ვთვლით მიმდინარედ
+STATUS_ONGOING = "მიმდინარე"
+STATUS_DONE = "დასრულებული"
+status_options = [STATUS_ONGOING, STATUS_DONE]
+if not df.empty and 'project_status' in df.columns:
+    df['project_status'] = df['project_status'].fillna(STATUS_ONGOING)
 
 # 🎨 Custom CSS ღილაკებისა და ბარათების კონტურების მართვისთვის
 st.markdown("""
@@ -627,7 +635,7 @@ with tab1:
 
         st.write("### 📋 ყველა შეყვანილი პროექტის დეტალური ბაზა და რეესტრი")
 
-        col_search1, col_search2, col_search3, col_search4 = st.columns(4)
+        col_search1, col_search2, col_search3, col_search4, col_search5 = st.columns(5)
         with col_search1:
             search_source = st.selectbox("🔍 ძებნა წყაროთი", ["ყველა"] + df[
                 'project_source'].unique().tolist() if 'project_source' in df.columns else ["ყველა"])
@@ -637,6 +645,8 @@ with tab1:
             search_client = st.text_input("🔍 ძებნა დამკვეთით", value="")
         with col_search4:
             search_designer = st.text_input("🔍 ძებნა დიზაინერით", value="")
+        with col_search5:
+            search_status = st.selectbox("🔍 სტატუსი", ["ყველა"] + status_options)
 
         col_date_filter, col_metric = st.columns([2, 1])
         with col_date_filter:
@@ -648,6 +658,8 @@ with tab1:
             filtered_export_base = filtered_export_base[filtered_export_base['project_source'] == search_source]
         if search_cat != "ყველა":
             filtered_export_base = filtered_export_base[filtered_export_base['project_category'] == search_cat]
+        if search_status != "ყველა":
+            filtered_export_base = filtered_export_base[filtered_export_base['project_status'] == search_status]
         if search_client.strip():
             filtered_export_base = filtered_export_base[
                 filtered_export_base['client_name'].str.contains(search_client.strip(), case=False, na=False)]
@@ -668,19 +680,21 @@ with tab1:
 
         filtered_export_base['file_status'] = filtered_export_base['has_file'].apply(
             lambda x: "✅ ატვირთულია" if x else "❌ არ არის")
+        filtered_export_base['status_display'] = filtered_export_base['project_status'].apply(
+            lambda x: "✅ დასრულებული" if x == STATUS_DONE else "🛠️ მიმდინარე")
 
         detailed_export_df = filtered_export_base[
-            ['id', 'created_at', 'project_source', 'product_type', 'contract_type', 'contract_no', 'project_category',
-             'client_name', 'amount',
+            ['status_display', 'created_at', 'project_source', 'product_type', 'contract_type', 'contract_no',
+             'project_category', 'client_name', 'amount',
              'designer_name', 'salary_designer', 'delivery_date_str', 'file_status']
         ].copy() if not filtered_calc_df.empty else pd.DataFrame(
-            columns=['id', 'created_at', 'project_source', 'product_type', 'contract_type', 'contract_no',
+            columns=['status_display', 'created_at', 'project_source', 'product_type', 'contract_type', 'contract_no',
                      'project_category', 'client_name',
                      'amount', 'designer_name', 'salary_designer', 'delivery_date_str', 'file_status'])
 
         if not detailed_export_df.empty:
             detailed_export_df.columns = [
-                'ID',
+                'სტატუსი',
                 'შექმნის თარიღი',
                 'პროექტის წყარო',
                 'პროდუქცია',
@@ -861,6 +875,10 @@ with tab2:
             e_delivery_date = st.date_input("ჩაბარების თარიღი", value=parsed_delivery_date)
             e_delivery_date_str = e_delivery_date.strftime("%d %b, %Y")
 
+            curr_status = record_to_edit.get('project_status', STATUS_ONGOING)
+            e_status = st.selectbox("პროექტის სტატუსი", status_options,
+                                    index=status_options.index(curr_status) if curr_status in status_options else 0)
+
             st.info(f"📅 შექმნის თარიღი (უცვლელი): {record_to_edit['created_at']}")
 
             col1, col2 = st.columns(2)
@@ -873,11 +891,11 @@ with tab2:
                     cur = conn.cursor()
                     cur.execute("""
                         UPDATE projects 
-                        SET contract_type = %s, contract_no = %s, project_category = %s, client_name = %s, product_type = %s, amount = %s, designer_name = %s, delivery_date_str = %s 
+                        SET contract_type = %s, contract_no = %s, project_category = %s, client_name = %s, product_type = %s, amount = %s, designer_name = %s, delivery_date_str = %s, project_status = %s 
                         WHERE id = %s
                     """, (e_contract_type, e_contract_no.strip(), e_project_category, e_client.strip(), e_product_type,
                           e_amount,
-                          e_designer, e_delivery_date_str, record_id))
+                          e_designer, e_delivery_date_str, e_status, record_id))
                     conn.commit()
                     cur.close()
                     conn.close()
