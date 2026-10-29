@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 import psycopg2
 from datetime import datetime
 
@@ -17,7 +18,7 @@ if not st.session_state["authenticated_designer"]:
     password_input = st.text_input("პაროლი", type="password")
 
     if st.button("შესვლა"):
-        if password_input == "Design123":
+        if password_input == st.secrets["APP_PASSWORD"]:
             st.session_state["authenticated_designer"] = True
             st.success("პაროლი სწორია! იტვირთება სისტემა...")
             st.rerun()
@@ -27,15 +28,14 @@ if not st.session_state["authenticated_designer"]:
     st.stop()
 # ===================================================================
 
-# PostgreSQL ბაზასთან მიერთება
-DB_USER = "postgres"
-DB_PASS = "123qweASD"
-DB_HOST = "localhost"
-DB_PORT = "5432"
-DB_NAME = "RMS"
+# PostgreSQL (Supabase) ბაზასთან მიერთება
+db_url = st.secrets["db"]["url"]
+engine = create_engine(db_url, pool_pre_ping=True)
 
-db_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_engine(db_url)
+_u = make_url(db_url)
+DB_USER, DB_PASS, DB_HOST, DB_PORT, DB_NAME = (
+    _u.username, _u.password, _u.host, _u.port, _u.database
+)
 
 
 # მონაცემების წამოღება და ბაზის სტრუქტურის შემოწმება
@@ -137,7 +137,7 @@ def get_data():
         cur_check.close()
         conn_check.close()
     except Exception as e:
-        pass
+        st.error(f"ბაზის სტრუქტურის შემოწმების შეცდომა: {e}")
 
     try:
         df_projects = pd.read_sql(
@@ -155,6 +155,7 @@ def get_data():
             df_projects['year'] = df_projects['created_at'].dt.year
         return df_projects, df_designers, df_managers, df_products, df_history, df_m_history
     except Exception as e:
+        st.error(f"მონაცემების წაკითხვის შეცდომა: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
