@@ -1,159 +1,108 @@
 import streamlit as st
 
-# 1. გვერდის კონფიგურაცია აუცილებლად თავში უნდა იყოს
 st.set_page_config(
     page_title="Op-Art - მართვის სისტემა",
     page_icon="🛋️",
     layout="wide"
 )
 
-# 🎨 სტილები
+# 🌙 დიზაინი B: მუქი, "მინის" ბარათები, ნეონური აქცენტები
 st.markdown("""
 <style>
-    /* ზედა ცარიელი სივრცის შემცირება */
-    .block-container { padding-top: 2.2rem; max-width: 1200px; }
+    .stApp {
+        background: radial-gradient(circle at 15% 0%, #1E1B4B 0%, #0B1020 45%, #070A14 100%);
+    }
+    header[data-testid="stHeader"] { background: transparent; }
+    [data-testid="stSidebar"] { background: #0B1020; border-right: 1px solid rgba(255,255,255,0.07); }
+    [data-testid="stSidebarNav"] span, [data-testid="stSidebarNav"] a { color: #CBD5E1 !important; }
+    .block-container { padding-top: 2.4rem; max-width: 1200px; }
 
-    /* ---------- HERO ---------- */
-    .hero {
-        background: linear-gradient(120deg, #0F172A 0%, #1E3A8A 55%, #2563EB 100%);
-        border-radius: 22px;
-        padding: 42px 44px;
-        margin-bottom: 34px;
-        box-shadow: 0 18px 40px -18px rgba(30, 58, 138, 0.55);
-        position: relative;
-        overflow: hidden;
-    }
-    .hero::after {
-        content: "";
-        position: absolute;
-        right: -60px; top: -60px;
-        width: 260px; height: 260px;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.07);
-    }
-    .hero::before {
-        content: "";
-        position: absolute;
-        right: 120px; bottom: -90px;
-        width: 200px; height: 200px;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.05);
-    }
-    .hero-badge {
-        display: inline-block;
-        background: rgba(255, 255, 255, 0.14);
-        color: #DBEAFE;
-        font-size: 13px;
-        font-weight: 600;
-        padding: 5px 14px;
-        border-radius: 999px;
-        margin-bottom: 14px;
-        letter-spacing: 0.3px;
+    .hero { margin-bottom: 38px; }
+    .hero-tag {
+        display: inline-block; font-size: 12.5px; font-weight: 700; letter-spacing: 1.4px;
+        color: #A5B4FC; background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.35);
+        padding: 5px 14px; border-radius: 999px; margin-bottom: 18px;
     }
     .hero h1 {
-        color: #FFFFFF !important;
-        font-size: 40px !important;
-        font-weight: 800 !important;
-        line-height: 1.2 !important;
-        margin: 0 0 10px 0 !important;
-        padding: 0 !important;
+        font-size: 46px !important; font-weight: 800 !important; line-height: 1.15 !important;
+        margin: 0 0 12px 0 !important; padding: 0 !important;
+        background: linear-gradient(90deg, #FFFFFF 0%, #C4B5FD 55%, #67E8F9 100%);
+        -webkit-background-clip: text; background-clip: text; color: transparent !important;
     }
-    .hero p {
-        color: #BFDBFE !important;
-        font-size: 17px !important;
-        margin: 0 !important;
-    }
+    .hero p { color: #94A3B8 !important; font-size: 17px !important; margin: 0 !important; }
 
-    .section-title {
-        font-size: 20px;
-        font-weight: 700;
-        margin: 4px 0 16px 4px;
-        opacity: 0.9;
-    }
-
-    /* ---------- ბარათები ---------- */
+    /* ბარათები */
     div[data-testid="stVerticalBlockBorderWrapper"] {
-        border-radius: 18px !important;
-        border: 1px solid rgba(100, 116, 139, 0.25) !important;
-        padding: 6px 8px 4px 8px;
-        transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
-        background: rgba(148, 163, 184, 0.06);
+        background: rgba(255,255,255,0.045);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255,255,255,0.10) !important;
+        border-radius: 20px !important;
+        padding: 8px 10px 6px 10px;
+        transition: all 0.25s ease;
     }
     div[data-testid="stVerticalBlockBorderWrapper"]:hover {
         transform: translateY(-5px);
-        box-shadow: 0 22px 34px -18px rgba(15, 23, 42, 0.35);
-        border-color: rgba(37, 99, 235, 0.55) !important;
+        border-color: rgba(167,139,250,0.7) !important;
+        box-shadow: 0 0 0 1px rgba(167,139,250,0.25), 0 22px 40px -18px rgba(124,58,237,0.55);
     }
 
-    .card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .card-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
     .icon-wrap {
-        width: 54px; height: 54px;
-        border-radius: 15px;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 28px;
+        width: 56px; height: 56px; border-radius: 16px; font-size: 28px;
+        display:flex; align-items:center; justify-content:center;
+        border: 1px solid rgba(255,255,255,0.12);
     }
-    .pill {
-        font-size: 12px; font-weight: 700;
-        padding: 4px 11px; border-radius: 999px;
-    }
-    .pill-live { background: rgba(16, 185, 129, 0.16); color: #059669; }
-    .pill-soon { background: rgba(148, 163, 184, 0.22); color: #64748B; }
+    .pill { font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px; }
+    .pill-live { background: rgba(52,211,153,0.15); color: #6EE7B7; border: 1px solid rgba(52,211,153,0.35); }
+    .pill-soon { background: rgba(148,163,184,0.12); color: #94A3B8; border: 1px solid rgba(148,163,184,0.25); }
 
-    .card-title { font-size: 21px; font-weight: 750; margin: 0 0 8px 0; }
-    .card-desc  { font-size: 14.5px; line-height: 1.55; opacity: 0.72; min-height: 66px; margin: 0 0 6px 0; }
+    .card-title { font-size: 21px; font-weight: 750; color: #F8FAFC; margin: 0 0 8px 0; }
+    .card-desc  { font-size: 14.5px; line-height: 1.55; color: #94A3B8; min-height: 66px; margin: 0 0 6px 0; }
 
-    /* ღილაკები / ბმულები ბარათებში */
-    div[data-testid="stPageLink"] a, div[data-testid="stVerticalBlockBorderWrapper"] .stButton > button {
-        border-radius: 12px !important;
-        font-weight: 650 !important;
-        min-height: 44px;
-    }
+    /* ღილაკები */
     div[data-testid="stPageLink"] a {
-        background: linear-gradient(120deg, #1D4ED8, #2563EB);
-        color: #FFFFFF !important;
-        justify-content: center;
-        border: none !important;
-        transition: filter 0.2s ease;
+        background: linear-gradient(120deg, #7C3AED, #06B6D4);
+        border: none !important; border-radius: 12px !important; min-height: 44px;
+        justify-content: center; font-weight: 650 !important; transition: filter 0.2s ease;
     }
-    div[data-testid="stPageLink"] a:hover { filter: brightness(1.12); }
+    div[data-testid="stPageLink"] a:hover { filter: brightness(1.15); }
     div[data-testid="stPageLink"] a p, div[data-testid="stPageLink"] a span { color: #FFFFFF !important; }
+    .stButton > button:disabled {
+        background: rgba(255,255,255,0.05) !important; color: #64748B !important;
+        border: 1px dashed rgba(255,255,255,0.15) !important; border-radius: 12px !important; min-height: 44px;
+    }
 
-    /* ---------- ფუტერი ---------- */
-    .footer { text-align: center; color: #94A3B8; font-size: 13.5px; margin-top: 46px; padding-top: 18px;
-              border-top: 1px solid rgba(148, 163, 184, 0.3); }
+    .footer { text-align:center; color:#64748B; font-size:13.5px; margin-top:46px; padding-top:18px;
+              border-top: 1px solid rgba(255,255,255,0.08); }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- HERO ----------
 st.markdown("""
 <div class="hero">
-    <div class="hero-badge">🛋️ Op-Art · ERP</div>
-    <h1>კომპანიის მართვის ერთიანი სისტემა</h1>
+    <div class="hero-tag">OP-ART · ERP</div>
+    <h1>კომპანიის მართვის<br>ერთიანი სისტემა</h1>
     <p>მოგესალმებით! აირჩიეთ სასურველი სამუშაო მიმართულება.</p>
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="section-title">სამუშაო მიმართულებები</div>', unsafe_allow_html=True)
-
-# ---------- განყოფილებები ----------
-# page = None  →  განყოფილება ჯერ არ არის აწყობილი
+# page = None → განყოფილება ჯერ არ არის აწყობილი
 SECTIONS = [
-    {"icon": "🧑‍🎨", "title": "დიზაინერები", "color": "rgba(37, 99, 235, 0.14)",
+    {"icon": "🧑‍🎨", "title": "დიზაინერები", "color": "rgba(99,102,241,0.25)",
      "desc": "დიზაინერების ხელფასები, პროექტები, დაკონტრაქტების % და რეესტრი.",
      "page": "pages/1_Designers.py", "key": "designers"},
-    {"icon": "🛒", "title": "მყიდველის შეკვეთები", "color": "rgba(16, 185, 129, 0.15)",
+    {"icon": "🛒", "title": "მყიდველის შეკვეთები", "color": "rgba(16,185,129,0.22)",
      "desc": "მომხმარებელთა შეკვეთები, სტატუსები და დეტალები.",
      "page": "pages/2_Orders.py", "key": "orders"},
-    {"icon": "📐", "title": "კონსტრუქტორები", "color": "rgba(139, 92, 246, 0.15)",
+    {"icon": "📐", "title": "კონსტრუქტორები", "color": "rgba(168,85,247,0.25)",
      "desc": "კონსტრუქტორების დატვირთვა და პროექტების მართვა.",
      "page": None, "key": "constructors"},
-    {"icon": "🏭", "title": "წარმოება", "color": "rgba(245, 158, 11, 0.17)",
+    {"icon": "🏭", "title": "წარმოება", "color": "rgba(245,158,11,0.22)",
      "desc": "წარმოების პროცესები, ვადები და შესრულებული სამუშაოები.",
      "page": None, "key": "production"},
-    {"icon": "🛠️", "title": "მონტაჟი", "color": "rgba(236, 72, 153, 0.15)",
+    {"icon": "🛠️", "title": "მონტაჟი", "color": "rgba(236,72,153,0.22)",
      "desc": "მონტაჟის გრაფიკები, ბრიგადები და ჩაბარება.",
      "page": None, "key": "install"},
-    {"icon": "📊", "title": "ბუღალტერია", "color": "rgba(14, 165, 233, 0.15)",
+    {"icon": "📊", "title": "ბუღალტერია", "color": "rgba(14,165,233,0.22)",
      "desc": "ერთიანი ფინანსური უწყისი, ხელფასები და ანგარიშგება.",
      "page": None, "key": "accounting"},
 ]
@@ -171,14 +120,12 @@ def render_card(sec):
             <div class="card-title">{sec['title']}</div>
             <p class="card-desc">{sec['desc']}</p>
         """, unsafe_allow_html=True)
-
         if sec["page"]:
             st.page_link(sec["page"], label=f"გახსნა: {sec['title']}", icon="🚀", use_container_width=True)
         else:
             st.button("⏳ მალე დაემატება", disabled=True, use_container_width=True, key=f"btn_{sec['key']}")
 
 
-# 2 რიგი x 3 სვეტი, ყველა ბარათი ერთნაირი სიმაღლის
 for row_start in range(0, len(SECTIONS), 3):
     cols = st.columns(3, gap="large")
     for col, sec in zip(cols, SECTIONS[row_start:row_start + 3]):
