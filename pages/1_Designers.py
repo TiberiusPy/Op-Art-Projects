@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 import psycopg2
 from datetime import datetime
+import plotly.express as px
 
 st.set_page_config(page_title="Op-Art - დიზაინერების ხელფასები და დეშბორდი", layout="wide")
 
@@ -187,18 +188,17 @@ st.markdown("""
 
 st.title("🛋️ Op-Art - დიზაინერების ხელფასები და დეშბორდი")
 
-# მენიუ / ტაბები (4 ჩანართი)
-tab1, tab2, tab3, tab4 = st.tabs([
+# მენიუ / ტაბები (დამატებულია "რეპორტები" ტაბი)
+tab1, tab_rep, tab2, tab3, tab4 = st.tabs([
     "📊 დეშბორდი და დამატება",
+    "📈 რეპორტები",
     "✏️ ჩანაწერების რედაქტირება / წაშლა",
     "⚙️ ცნობარების მართვა",
     "📋 Outsource რეესტრი"
 ])
 
-all_designers = designers_df['full_name'].tolist() if not designers_df.empty else ["თათა კუხალაშვილი",
-                                                                                   "მარიამ ტაბატაძე", "გოჩა მუსერიძე"]
+all_designers = designers_df['full_name'].tolist() if not designers_df.empty else ["თათა კუხალაშვილი", "მარიამ ტაბატაძე", "გოჩა მუსერიძე"]
 designer_options = [d for d in all_designers if d != "ია პირტახია"]
-# ახალი პროექტის დამატებისას ჩანს ყველა დიზაინერი (ია პირტახიას ჩათვლით)
 designer_options_all = list(all_designers)
 
 product_options = ["ავეჯი", "კარი"]
@@ -219,20 +219,92 @@ if not df.empty and 'contract_no' in df.columns:
     except:
         pass
 
+# ==================== წინასწარი გამოთვლები ====================
+calc_df = pd.DataFrame()
+if not df.empty:
+    calculated_rows = []
+    for idx, row in df.iterrows():
+        c_type = row['contract_type']
+        c_no = row['contract_no']
+        amt = row['amount']
+        designer = row['designer_name']
+        rec_date = row['created_at']
+        p_type = row.get('product_type', '')
+        p_source = row.get('project_source', 'Op-Art')
+
+        salary_designer = 0
+        salary_ia = 0
+
+        ia_pct = 0.0035
+        if not managers_df.empty:
+            ia_row = managers_df[managers_df['full_name'] == "ია პირტახია"]
+            if not ia_row.empty and pd.notnull(ia_row.iloc[0]['manager_pct']):
+                ia_pct = float(ia_row.iloc[0]['manager_pct'])
+
+        current_month_df = df[df['created_at'].dt.strftime('%Y-%m') == rec_date.strftime('%Y-%m')]
+        month_total_turnover = current_month_df['amount'].sum()
+        salary_ia = month_total_turnover * ia_pct
+
+        if p_source == "Outsource - დიზაინით":
+            out_com_pct = float(row['outsource_commission_pct']) if 'outsource_commission_pct' in row and pd.notnull(row['outsource_commission_pct']) else 0.02
+            salary_designer = amt * out_com_pct
+        else:
+            base_design_no = c_no.split('-')[0] if '-' in c_no else None
+            design_match = df[df['contract_no'] == base_design_no] if base_design_no else pd.DataFrame()
+            design_amount = design_match.iloc[0]['amount'] if not design_match.empty else 0
+
+            des_row = designers_df[designers_df['full_name'] == designer] if not designers_df.empty else pd.DataFrame()
+
+            if 'saved_design_fee_pct' in row and pd.notnull(row['saved_design_fee_pct']):
+                des_fee_pct = float(row['saved_design_fee_pct'])
+            else:
+                des_fee_pct = float(des_row.iloc[0]['design_fee_pct']) if not des_row.empty and 'design_fee_pct' in des_row.columns and pd.notnull(des_row.iloc[0]['design_fee_pct']) else 0.50
+
+            if 'saved_commission_pct' in row and pd.notnull(row['saved_commission_pct']):
+                designer_pct = float(row['saved_commission_pct'])
+            else:
+                designer_pct = float(des_row.iloc[0]['commission_pct']) if not des_row.empty and 'commission_pct' in des_row.columns and pd.notnull(des_row.iloc[0]['commission_pct']) else 0.02
+
+            if p_type == "კარი":
+                salary_designer = 0
+            else:
+                if c_type == "დიზაინი":
+                    base_no = c_no
+                    contract_match = df[(df['contract_type'] == "დაკონტრაქტება") & (df['contract_no'] == base_no + "-1")]
+                    if not contract_match.empty and contract_match.iloc[0]['created_at'].strftime('%Y-%m') == rec_date.strftime('%Y-%m'):
+                        salary_designer = 0
+                    else:
+                        salary_designer = amt * des_fee_pct
+                elif c_type == "დაკონტრაქტება":
+                    if not design_match.empty:
+                        design_date = design_match.iloc[0]['created_at']
+                        hist_des_fee = float(design_match.iloc[0]['saved_design_fee_pct']) if 'saved_design_fee_pct' in design_match.columns and pd.notnull(design_match.iloc[0]['saved_design_fee_pct']) else des_fee_pct
+                        if design_date.strftime('%Y-%m') == rec_date.strftime('%Y-%m'):
+                            salary_designer = (amt + design_amount) * designer_pct
+                        else:
+                            salary_designer = ((amt + design_amount) * designer_pct) - (design_amount * hist_des_fee)
+                    else:
+                        salary_designer = amt * designer_pct
+
+        row['salary_designer'] = round(salary_designer, 2)
+        row['salary_ia'] = round(salary_ia, 2)
+        calculated_rows.append(row)
+
+    calc_df = pd.DataFrame(calculated_rows)
+
+
 with tab1:
     st.sidebar.header("➕ ახალი ჩანაწერის დამატება")
 
     project_source = st.sidebar.selectbox("პროექტის წყარო", ["Op-Art", "Outsource"], key="proj_source_sel")
 
     if project_source == "Op-Art":
-        product_type = st.sidebar.selectbox("პროდუქცია", product_options, index=None, placeholder="აირჩიე",
-                                            key="prod_type_sidebar_sel")
+        product_type = st.sidebar.selectbox("პროდუქცია", product_options, index=None, placeholder="აირჩიე", key="prod_type_sidebar_sel")
 
         with st.sidebar.form("add_form", clear_on_submit=True):
             contract_type = st.selectbox("ხელშეკრულების ტიპი", contract_type_options, index=None, placeholder="აირჩიე")
             contract_no = st.text_input("ხელშეკრულების №", value=suggested_contract_no)
-            project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=None,
-                                            placeholder="აირჩიე")
+            project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=None, placeholder="აირჩიე")
             client_name = st.text_input("დამკვეთი")
 
             amount = st.number_input("ხელშეკრულების თანხა (₾)", min_value=0.0, step=100.0, value=0.0, format="%.2f")
@@ -252,14 +324,9 @@ with tab1:
                     st.sidebar.error("გთხოვთ, ბოლომდე შეავსეთ ყველა ველი!")
                 else:
                     try:
-                        des_rec = designers_df[
-                            designers_df['full_name'] == designer_name] if not designers_df.empty else pd.DataFrame()
-                        current_des_fee_pct = float(des_rec.iloc[0][
-                                                        'design_fee_pct']) if not des_rec.empty and 'design_fee_pct' in des_rec.columns and pd.notnull(
-                            des_rec.iloc[0]['design_fee_pct']) else 0.50
-                        current_com_pct = float(des_rec.iloc[0][
-                                                    'commission_pct']) if not des_rec.empty and 'commission_pct' in des_rec.columns and pd.notnull(
-                            des_rec.iloc[0]['commission_pct']) else 0.02
+                        des_rec = designers_df[designers_df['full_name'] == designer_name] if not designers_df.empty else pd.DataFrame()
+                        current_des_fee_pct = float(des_rec.iloc[0]['design_fee_pct']) if not des_rec.empty and 'design_fee_pct' in des_rec.columns and pd.notnull(des_rec.iloc[0]['design_fee_pct']) else 0.50
+                        current_com_pct = float(des_rec.iloc[0]['commission_pct']) if not des_rec.empty and 'commission_pct' in des_rec.columns and pd.notnull(des_rec.iloc[0]['commission_pct']) else 0.02
 
                         new_data = pd.DataFrame([{
                             "contract_type": contract_type,
@@ -280,23 +347,18 @@ with tab1:
                     except Exception as e:
                         st.sidebar.error(f"შეცდომა: {e}")
     else:
-        outsource_design_type = st.sidebar.selectbox("დიზაინი", ["დიზაინით", "დიზაინის გარეშე"],
-                                                     key="outsource_design_type_sel")
-        product_type = st.sidebar.selectbox("პროდუქცია", product_options, index=None, placeholder="აირჩიე",
-                                            key="prod_type_outsource_sel")
+        outsource_design_type = st.sidebar.selectbox("დიზაინი", ["დიზაინით", "დიზაინის გარეშე"], key="outsource_design_type_sel")
+        product_type = st.sidebar.selectbox("პროდუქცია", product_options, index=None, placeholder="აირჩიე", key="prod_type_outsource_sel")
 
         if outsource_design_type == "დიზაინით":
             with st.sidebar.form("add_outsource_design_form", clear_on_submit=True):
                 outsource_designer_name = st.text_input("Outsource დიზაინერის სახელი და გვარი")
                 outsource_contract_no = st.text_input("Outsource დიზაინერის ხელშეკრულების №")
-                outsource_commission_pct = st.number_input("Outsource დიზაინერის საკომისიო (%)", min_value=0.0,
-                                                           max_value=100.0, value=2.0, step=0.5)
-                outsource_installments = st.number_input("საკომისიოს რამდენ ნაწილად ვაძლევთ", min_value=1, max_value=12,
-                                                         value=1, step=1)
+                outsource_commission_pct = st.number_input("Outsource დიზაინერის საკომისიო (%)", min_value=0.0, max_value=100.0, value=2.0, step=0.5)
+                outsource_installments = st.number_input("საკომისიოს რამდენ ნაწილად ვაძლევთ", min_value=1, max_value=12, value=1, step=1)
 
                 contract_no = st.text_input("ხელშეკრულების №", value=suggested_contract_no)
-                project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=None,
-                                                placeholder="აირჩიე")
+                project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=None, placeholder="აირჩიე")
                 client_name = st.text_input("დამკვეთი")
                 amount = st.number_input("ხელშეკრულების თანხა (₾)", min_value=0.0, step=100.0, value=0.0, format="%.2f")
 
@@ -338,16 +400,12 @@ with tab1:
             with st.sidebar.form("add_outsource_nodesign_form", clear_on_submit=True):
                 outsource_designer_name = st.text_input("Outsource დიზაინერის სახელი და გვარი")
                 outsource_contract_no = st.text_input("Outsource დიზაინერის ხელშეკრულების №")
-                outsource_commission_pct = st.number_input("Outsource დიზაინერის საკომისიო (%)", min_value=0.0,
-                                                           max_value=100.0, value=2.0, step=0.5)
-                outsource_installments = st.number_input("საკომისიოს რამდენ ნაწილად ვაძლევთ", min_value=1, max_value=12,
-                                                         value=1, step=1)
+                outsource_commission_pct = st.number_input("Outsource დიზაინერის საკომისიო (%)", min_value=0.0, max_value=100.0, value=2.0, step=0.5)
+                outsource_installments = st.number_input("საკომისიოს რამდენ ნაწილად ვაძლევთ", min_value=1, max_value=12, value=1, step=1)
 
-                contract_type = st.selectbox("ხელშეკრულების ტიპი", contract_type_options, index=None,
-                                             placeholder="აირჩიე")
+                contract_type = st.selectbox("ხელშეკრულების ტიპი", contract_type_options, index=None, placeholder="აირჩიე")
                 contract_no = st.text_input("ხელშეკრულების №", value=suggested_contract_no)
-                project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=None,
-                                                placeholder="აირჩიე")
+                project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=None, placeholder="აირჩიე")
                 client_name = st.text_input("დამკვეთი")
                 amount = st.number_input("ხელშეკრულების თანხა (₾)", min_value=0.0, step=100.0, value=0.0, format="%.2f")
 
@@ -366,15 +424,9 @@ with tab1:
                         st.sidebar.error("გთხოვთ, ბოლომდე შეავსეთ ყველა ველი!")
                     else:
                         try:
-                            des_rec = designers_df[
-                                designers_df[
-                                    'full_name'] == designer_name] if not designers_df.empty else pd.DataFrame()
-                            current_des_fee_pct = float(des_rec.iloc[0][
-                                                            'design_fee_pct']) if not des_rec.empty and 'design_fee_pct' in des_rec.columns and pd.notnull(
-                                des_rec.iloc[0]['design_fee_pct']) else 0.50
-                            current_com_pct = float(des_rec.iloc[0][
-                                                        'commission_pct']) if not des_rec.empty and 'commission_pct' in des_rec.columns and pd.notnull(
-                                des_rec.iloc[0]['commission_pct']) else 0.02
+                            des_rec = designers_df[designers_df['full_name'] == designer_name] if not designers_df.empty else pd.DataFrame()
+                            current_des_fee_pct = float(des_rec.iloc[0]['design_fee_pct']) if not des_rec.empty and 'design_fee_pct' in des_rec.columns and pd.notnull(des_rec.iloc[0]['design_fee_pct']) else 0.50
+                            current_com_pct = float(des_rec.iloc[0]['commission_pct']) if not des_rec.empty and 'commission_pct' in des_rec.columns and pd.notnull(des_rec.iloc[0]['commission_pct']) else 0.02
 
                             new_data = pd.DataFrame([{
                                 "contract_type": contract_type,
@@ -399,93 +451,7 @@ with tab1:
                         except Exception as e:
                             st.sidebar.error(f"შეცდომა: {e}")
 
-    if not df.empty:
-        calculated_rows = []
-
-        for idx, row in df.iterrows():
-            c_type = row['contract_type']
-            c_no = row['contract_no']
-            amt = row['amount']
-            designer = row['designer_name']
-            rec_date = row['created_at']
-            p_type = row.get('product_type', '')
-            p_source = row.get('project_source', 'Op-Art')
-
-            salary_designer = 0
-            salary_ia = 0
-
-            ia_pct = 0.0035
-            if not managers_df.empty:
-                ia_row = managers_df[managers_df['full_name'] == "ია პირტახია"]
-                if not ia_row.empty and pd.notnull(ia_row.iloc[0]['manager_pct']):
-                    ia_pct = float(ia_row.iloc[0]['manager_pct'])
-
-            current_month_df = df[df['created_at'].dt.strftime('%Y-%m') == rec_date.strftime('%Y-%m')]
-            month_total_turnover = current_month_df['amount'].sum()
-            salary_ia = month_total_turnover * ia_pct
-
-            if p_source == "Outsource - დიზაინით":
-                out_com_pct = float(
-                    row['outsource_commission_pct']) if 'outsource_commission_pct' in row and pd.notnull(
-                    row['outsource_commission_pct']) else 0.02
-                salary_designer = amt * out_com_pct
-            else:
-                base_design_no = c_no.split('-')[0] if '-' in c_no else None
-                design_match = df[df['contract_no'] == base_design_no] if base_design_no else pd.DataFrame()
-                design_amount = design_match.iloc[0]['amount'] if not design_match.empty else 0
-
-                des_row = designers_df[
-                    designers_df['full_name'] == designer] if not designers_df.empty else pd.DataFrame()
-
-                if 'saved_design_fee_pct' in row and pd.notnull(row['saved_design_fee_pct']):
-                    des_fee_pct = float(row['saved_design_fee_pct'])
-                else:
-                    des_fee_pct = float(des_row.iloc[0][
-                                            'design_fee_pct']) if not des_row.empty and 'design_fee_pct' in des_row.columns and pd.notnull(
-                        des_row.iloc[0]['design_fee_pct']) else 0.50
-
-                if 'saved_commission_pct' in row and pd.notnull(row['saved_commission_pct']):
-                    designer_pct = float(row['saved_commission_pct'])
-                else:
-                    designer_pct = float(des_row.iloc[0][
-                                             'commission_pct']) if not des_row.empty and 'commission_pct' in des_row.columns and pd.notnull(
-                        des_row.iloc[0]['commission_pct']) else 0.02
-
-                if p_type == "კარი":
-                    salary_designer = 0
-                else:
-                    if c_type == "დიზაინი":
-                        base_no = c_no
-                        contract_match = df[
-                            (df['contract_type'] == "დაკონტრაქტება") & (df['contract_no'] == base_no + "-1")]
-
-                        if not contract_match.empty and contract_match.iloc[0]['created_at'].strftime(
-                                '%Y-%m') == rec_date.strftime('%Y-%m'):
-                            salary_designer = 0
-                        else:
-                            salary_designer = amt * des_fee_pct
-
-                    elif c_type == "დაკონტრაქტება":
-                        if not design_match.empty:
-                            design_date = design_match.iloc[0]['created_at']
-                            hist_des_fee = float(design_match.iloc[0][
-                                                     'saved_design_fee_pct']) if 'saved_design_fee_pct' in design_match.columns and pd.notnull(
-                                design_match.iloc[0]['saved_design_fee_pct']) else des_fee_pct
-
-                            if design_date.strftime('%Y-%m') == rec_date.strftime('%Y-%m'):
-                                salary_designer = (amt + design_amount) * designer_pct
-                            else:
-                                salary_designer = ((amt + design_amount) * designer_pct) - (
-                                        design_amount * hist_des_fee)
-                        else:
-                            salary_designer = amt * designer_pct
-
-            row['salary_designer'] = round(salary_designer, 2)
-            row['salary_ia'] = round(salary_ia, 2)
-            calculated_rows.append(row)
-
-        calc_df = pd.DataFrame(calculated_rows)
-
+    if not calc_df.empty:
         col_title, col_year_sel, col_btn = st.columns([2, 1, 1])
         with col_title:
             st.subheader("📊 თვიური რეპორტი და ხელფასების უწყისი")
@@ -493,16 +459,13 @@ with tab1:
         db_years = calc_df['year'].unique().tolist() if 'year' in calc_df.columns else []
         default_years = [2026, 2027, 2028]
         available_years = sorted(list(set(db_years + default_years)))
-
         current_year = datetime.now().year
         default_index = available_years.index(current_year) if current_year in available_years else 0
 
         with col_year_sel:
-            selected_year = st.selectbox("📅 აირჩიეთ წელი", available_years, index=default_index)
+            selected_year = st.selectbox("📅 აირჩიეთ წელი", available_years, index=default_index, key="tab1_year_sel")
 
-        filtered_calc_df = calc_df[calc_df['year'] == selected_year] if 'year' in calc_df.columns else pd.DataFrame(
-            columns=calc_df.columns)
-
+        filtered_calc_df = calc_df[calc_df['year'] == selected_year] if 'year' in calc_df.columns else pd.DataFrame(columns=calc_df.columns)
         year_short = str(selected_year)[-2:]
         month_names_eng = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         all_months_sorted = [f"{m}.{year_short}" for m in month_names_eng]
@@ -513,122 +476,68 @@ with tab1:
         for d in designers_to_show:
             row_dict = {"სახელი და გვარი": d}
             for m in all_months_sorted:
-                m_filtered = filtered_calc_df[
-                    filtered_calc_df['month_year'] == m] if not filtered_calc_df.empty else pd.DataFrame()
+                m_filtered = filtered_calc_df[filtered_calc_df['month_year'] == m] if not filtered_calc_df.empty else pd.DataFrame()
                 if d == "ია პირტახია":
                     val = m_filtered['salary_ia'].max() if not m_filtered.empty else 0
                     if not m_filtered.empty:
-                        own_mask = (m_filtered['product_type'] != 'კარი') & (m_filtered['designer_name'] == d) & (
-                                m_filtered['project_source'] != "Outsource - დიზაინით")
+                        own_mask = (m_filtered['product_type'] != 'კარი') & (m_filtered['designer_name'] == d) & (m_filtered['project_source'] != "Outsource - დიზაინით")
                         val = val + m_filtered[own_mask]['salary_designer'].sum()
                 else:
                     furniture_m_filtered = m_filtered[m_filtered.get('product_type', '') != 'კარი']
-                    val = furniture_m_filtered[furniture_m_filtered['designer_name'] == d][
-                        'salary_designer'].sum() if not furniture_m_filtered.empty else 0
+                    val = furniture_m_filtered[furniture_m_filtered['designer_name'] == d]['salary_designer'].sum() if not furniture_m_filtered.empty else 0
                 row_dict[m] = round(val, 2) if val > 0 else 0.0
             designers_data.append(row_dict)
 
         df_des_table = pd.DataFrame(designers_data)
         df_des_table.index = range(1, len(df_des_table) + 1)
-
         styled_des = df_des_table.style.format(
             {m: (lambda x: f"{x:,.2f}" if x > 0 else "-") for m in all_months_sorted}, na_rep="-"
         ).set_properties(**{'text-align': 'right'})
         st.dataframe(styled_des, use_container_width=True)
         st.write("")
 
+        # 3. "დიზაინი" და "დაკონტრაქტება" დარჩა დეშბორდის გვერდზეც
         st.markdown("#### 🎨 დიზაინი")
-        furniture_calc_df = filtered_calc_df[
-            filtered_calc_df.get('product_type', '') != 'კარი'] if not filtered_calc_df.empty else pd.DataFrame()
+        furniture_calc_df = filtered_calc_df[filtered_calc_df.get('product_type', '') != 'კარი'] if not filtered_calc_df.empty else pd.DataFrame()
 
         d_count_dict = {"სახელი და გვარი": "დიზაინი (რ-ბა)"}
         for m in all_months_sorted:
-            cnt = len(furniture_calc_df[(furniture_calc_df['month_year'] == m) & (
-                    furniture_calc_df['contract_type'] == "დიზაინი")]) if not furniture_calc_df.empty else 0
+            cnt = len(furniture_calc_df[(furniture_calc_df['month_year'] == m) & (furniture_calc_df['contract_type'] == "დიზაინი")]) if not furniture_calc_df.empty else 0
             d_count_dict[m] = int(cnt)
 
         d_sum_dict = {"სახელი და გვარი": "დიზაინი (თანხა)"}
         for m in all_months_sorted:
-            s = furniture_calc_df[
-                (furniture_calc_df['month_year'] == m) & (furniture_calc_df['contract_type'] == "დიზაინი")][
-                'amount'].sum() if not furniture_calc_df.empty else 0
+            s = furniture_calc_df[(furniture_calc_df['month_year'] == m) & (furniture_calc_df['contract_type'] == "დიზაინი")]['amount'].sum() if not furniture_calc_df.empty else 0
             d_sum_dict[m] = round(float(s), 2)
 
         df_design_info = pd.DataFrame([d_count_dict, d_sum_dict])
         df_design_info.index = ["🔢", "💰"]
-
         styled_design = df_design_info.style.format(
-            {m: (lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and x > 0 else ("-" if x == 0 else f"{x:,d}")) for
-             m in all_months_sorted}, na_rep="-"
+            {m: (lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and x > 0 else ("-" if x == 0 else f"{x:,d}")) for m in all_months_sorted}, na_rep="-"
         ).set_properties(**{'text-align': 'right'})
         st.dataframe(styled_design, use_container_width=True)
         st.write("")
 
         st.markdown("#### 🤝 დაკონტრაქტება")
-
         c_count_dict = {"სახელი და გვარი": "დაკონტრაქტება (რ-ბა)"}
         for m in all_months_sorted:
-            cnt = len(furniture_calc_df[(furniture_calc_df['month_year'] == m) & (
-                    furniture_calc_df['contract_type'] == "დაკონტრაქტება")]) if not furniture_calc_df.empty else 0
+            cnt = len(furniture_calc_df[(furniture_calc_df['month_year'] == m) & (furniture_calc_df['contract_type'] == "დაკონტრაქტება")]) if not furniture_calc_df.empty else 0
             c_count_dict[m] = int(cnt)
 
         c_sum_dict = {"სახელი და გვარი": "დაკონტრაქტება (თანხა)"}
         for m in all_months_sorted:
-            s = furniture_calc_df[
-                (furniture_calc_df['month_year'] == m) & (furniture_calc_df['contract_type'] == "დაკონტრაქტება")][
-                'amount'].sum() if not furniture_calc_df.empty else 0
+            s = furniture_calc_df[(furniture_calc_df['month_year'] == m) & (furniture_calc_df['contract_type'] == "დაკონტრაქტება")]['amount'].sum() if not furniture_calc_df.empty else 0
             c_sum_dict[m] = round(float(s), 2)
 
         df_contract_info = pd.DataFrame([c_count_dict, c_sum_dict])
         df_contract_info.index = ["🤝", "💵"]
-
         styled_contract = df_contract_info.style.format(
-            {m: (lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and x > 0 else ("-" if x == 0 else f"{x:,d}")) for
-             m in all_months_sorted}, na_rep="-"
+            {m: (lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and x > 0 else ("-" if x == 0 else f"{x:,d}")) for m in all_months_sorted}, na_rep="-"
         ).set_properties(**{'text-align': 'right'})
         st.dataframe(styled_contract, use_container_width=True)
         st.write("")
 
-        st.markdown("#### 📈 დაკონტრაქტების % (ინდივიდუალური და გუნდური)")
-
-        kpi_rows = []
-        for d in designer_options:
-            des_kpi_dict = {"სახელი და გვარი": f"{d} - დაკონტრაქტების %"}
-            for m in all_months_sorted:
-                m_data = furniture_calc_df[(furniture_calc_df['month_year'] == m) & (
-                        furniture_calc_df['designer_name'] == d)] if not furniture_calc_df.empty else pd.DataFrame()
-                d_cnt = len(m_data[m_data['contract_type'] == "დიზაინი"]) if not m_data.empty else 0
-                c_cnt = len(m_data[m_data['contract_type'] == "დაკონტრაქტება"]) if not m_data.empty else 0
-                if d_cnt > 0:
-                    kpi = (c_cnt / d_cnt) * 100
-                    des_kpi_dict[m] = f"{kpi:.1f}%"
-                else:
-                    des_kpi_dict[m] = "-"
-            kpi_rows.append(des_kpi_dict)
-
-        team_kpi_dict = {"სახელი და გვარი": "🌟 გუნდური დაკონტრაქტების %"}
-        for m in all_months_sorted:
-            m_data = furniture_calc_df[
-                furniture_calc_df['month_year'] == m] if not furniture_calc_df.empty else pd.DataFrame()
-            d_cnt = len(m_data[m_data['contract_type'] == "დიზაინი"]) if not m_data.empty else 0
-            c_cnt = len(m_data[m_data['contract_type'] == "დაკონტრაქტება"]) if not m_data.empty else 0
-            if d_cnt > 0:
-                kpi = (c_cnt / d_cnt) * 100
-                team_kpi_dict[m] = f"{kpi:.1f}%"
-            else:
-                team_kpi_dict[m] = "-"
-        kpi_rows.append(team_kpi_dict)
-
-        df_kpi = pd.DataFrame(kpi_rows)
-        kpi_emojis = ["🔹", "🔸", "▪️", "▫️", "🔹", "🔸"]
-        df_kpi.index = [kpi_emojis[i % len(kpi_emojis)] + (" " * i) for i in range(len(designer_options))] + ["🌟"]
-
-        styled_kpi = df_kpi.style.set_properties(**{'text-align': 'right'})
-        st.dataframe(styled_kpi, use_container_width=True)
-
-        final_report_df = pd.concat([df_des_table, df_design_info, df_contract_info, df_kpi])
-
-        csv_data_report = final_report_df.to_csv(index=True, sep=';').encode('utf-8-sig')
+        csv_data_report = df_des_table.to_csv(index=True, sep=';').encode('utf-8-sig')
         col_btn.download_button(
             label="📥 ექსპორტი Excel-ში",
             data=csv_data_report,
@@ -638,13 +547,11 @@ with tab1:
         )
 
         st.markdown("---")
-
         st.write("### 📋 ყველა შეყვანილი პროექტის დეტალური ბაზა და რეესტრი")
 
         col_search1, col_search2, col_search3, col_search4, col_search5 = st.columns(5)
         with col_search1:
-            search_source = st.selectbox("🔍 ძებნა წყაროთი", ["ყველა"] + df[
-                'project_source'].unique().tolist() if 'project_source' in df.columns else ["ყველა"])
+            search_source = st.selectbox("🔍 ძებნა წყაროთი", ["ყველა"] + df['project_source'].unique().tolist() if 'project_source' in df.columns else ["ყველა"])
         with col_search2:
             search_cat = st.selectbox("🔍 ძებნა კატეგორიით", ["ყველა", "ინდივიდუალური", "კორპორატიული"])
         with col_search3:
@@ -656,10 +563,9 @@ with tab1:
 
         col_date_filter, col_metric = st.columns([2, 1])
         with col_date_filter:
-            date_range = st.date_input("📅 ფილტრი თარიღებით (საწყისი - საბოლოო)", value=())
+            date_range = st.date_input("📅 ფილტრი თარიღებით", value=())
 
         filtered_export_base = filtered_calc_df.copy()
-
         if search_source != "ყველა":
             filtered_export_base = filtered_export_base[filtered_export_base['project_source'] == search_source]
         if search_cat != "ყველა":
@@ -667,27 +573,23 @@ with tab1:
         if search_status != "ყველა":
             filtered_export_base = filtered_export_base[filtered_export_base['project_status'] == search_status]
         if search_client.strip():
-            filtered_export_base = filtered_export_base[
-                filtered_export_base['client_name'].str.contains(search_client.strip(), case=False, na=False)]
+            filtered_export_base = filtered_export_base[filtered_export_base['client_name'].str.contains(search_client.strip(), case=False, na=False)]
         if search_designer.strip():
-            filtered_export_base = filtered_export_base[
-                filtered_export_base['designer_name'].str.contains(search_designer.strip(), case=False, na=False)]
+            filtered_export_base = filtered_export_base[filtered_export_base['designer_name'].str.contains(search_designer.strip(), case=False, na=False)]
 
         if isinstance(date_range, tuple) and len(date_range) == 2:
             start_date, end_date = date_range
             filtered_export_base = filtered_export_base[
                 (filtered_export_base['created_at'].dt.date >= start_date) &
                 (filtered_export_base['created_at'].dt.date <= end_date)
-                ]
+            ]
 
         total_turnover = filtered_export_base['amount'].sum() if not filtered_export_base.empty else 0.0
         with col_metric:
             st.metric(label="💰 ჯამური ნავაჭრი (მოფილტრული)", value=f"{total_turnover:,.2f} ₾")
 
-        filtered_export_base['file_status'] = filtered_export_base['has_file'].apply(
-            lambda x: "✅ ატვირთულია" if x else "❌ არ არის")
-        filtered_export_base['status_display'] = filtered_export_base['project_status'].apply(
-            lambda x: "✅ დასრულებული" if x == STATUS_DONE else "🛠️ მიმდინარე")
+        filtered_export_base['file_status'] = filtered_export_base['has_file'].apply(lambda x: "✅ ატვირთულია" if x else "❌ არ არის")
+        filtered_export_base['status_display'] = filtered_export_base['project_status'].apply(lambda x: "✅ დასრულებული" if x == STATUS_DONE else "🛠️ მიმდინარე")
 
         detailed_export_df = filtered_export_base[
             ['status_display', 'created_at', 'project_source', 'product_type', 'contract_type', 'contract_no',
@@ -700,19 +602,9 @@ with tab1:
 
         if not detailed_export_df.empty:
             detailed_export_df.columns = [
-                'სტატუსი',
-                'შექმნის თარიღი',
-                'პროექტის წყარო',
-                'პროდუქცია',
-                'ხელშეკრულების ტიპი',
-                'ხელშეკრულების №',
-                'პროექტის კატეგორია',
-                'დამკვეთი',
-                'თანხა',
-                'დიზაინერი',
-                'დიზაინერის ხელფასი',
-                'ჩაბარების თარიღი',
-                'ფაილი'
+                'სტატუსი', 'შექმნის თარიღი', 'პროექტის წყარო', 'პროდუქცია', 'ხელშეკრულების ტიპი',
+                'ხელშეკრულების №', 'პროექტის კატეგორია', 'დამკვეთი', 'თანხა', 'დიზაინერი',
+                'დიზაინერის ხელფასი', 'ჩაბარების თარიღი', 'ფაილი'
             ]
             detailed_export_df.index = range(1, len(detailed_export_df) + 1)
 
@@ -723,15 +615,11 @@ with tab1:
 
         st.dataframe(styled_detailed, use_container_width=True)
 
-        # 📎 ხელშეკრულების ფაილის ატვირთვა / გადმოწერა / წაშლა
         st.write("#### 📎 ხელშეკრულების ფაილის ატვირთვა / ჩამოტვირთვა")
         if not detailed_export_df.empty:
             col_doc1, col_doc2 = st.columns(2)
             with col_doc1:
-                selected_proj_no = st.selectbox("აირჩიეთ ხელშეკრულების № ფაილის მართვისთვის",
-                                                detailed_export_df['ხელშეკრულების №'].tolist())
-
-                # ვამოწმებთ სესიის ცვლადს ფაილის ველის გასასუფთავებლად
+                selected_proj_no = st.selectbox("აირჩიეთ ხელშეკრულების № ფაილის მართვისთვის", detailed_export_df['ხელშეკრულების №'].tolist())
                 if "file_uploader_key" not in st.session_state:
                     st.session_state["file_uploader_key"] = 0
 
@@ -744,8 +632,7 @@ with tab1:
                         file_bytes = uploaded_file.read()
                         file_name = uploaded_file.name
                         try:
-                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
-                                                    port=DB_PORT)
+                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                             cur = conn.cursor()
                             cur.execute(
                                 "UPDATE projects SET contract_file_data = %s, contract_file_name = %s WHERE contract_no = %s",
@@ -753,10 +640,7 @@ with tab1:
                             conn.commit()
                             cur.close()
                             conn.close()
-
-                            # ვცვლით გასაღებს, რომ ფაილის ასატვირთი ველი სრულად განულდეს
                             st.session_state["file_uploader_key"] += 1
-
                             st.success(f"ფაილი '{file_name}' წარმატებით მიება ხელშეკრულებას № {selected_proj_no}!")
                             st.rerun()
                         except Exception as e:
@@ -770,12 +654,9 @@ with tab1:
                     if not target_row.empty and target_row.iloc[0]['has_file']:
                         st.write(f"📄 **არსებული ფაილი:** {target_row.iloc[0]['contract_file_name']}")
                         try:
-                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
-                                                    port=DB_PORT)
+                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                             cur = conn.cursor()
-                            cur.execute(
-                                "SELECT contract_file_data, contract_file_name FROM projects WHERE contract_no = %s",
-                                (selected_proj_no,))
+                            cur.execute("SELECT contract_file_data, contract_file_name FROM projects WHERE contract_no = %s", (selected_proj_no,))
                             f_data, f_name = cur.fetchone()
                             cur.close()
                             conn.close()
@@ -787,23 +668,16 @@ with tab1:
                                     mime="application/octet-stream",
                                     key=f"dl_file_{selected_proj_no}"
                                 )
-
-                                # --- 🗑️ ფაილის წაშლის დასტურის მექანიზმი ---
                                 st.write("")
                                 with st.popover("🗑️ ფაილის წაშლა"):
                                     st.warning("ნამდვილად გსურთ ატვირთული ფაილის წაშლა?")
                                     col_del_yes, col_del_no = st.columns(2)
-
                                     with col_del_yes:
                                         if st.button("დიახ", key=f"yes_del_{selected_proj_no}"):
                                             try:
-                                                conn_del = psycopg2.connect(dbname=DB_NAME, user=DB_USER,
-                                                                            password=DB_PASS, host=DB_HOST,
-                                                                            port=DB_PORT)
+                                                conn_del = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                                                 cur_del = conn_del.cursor()
-                                                cur_del.execute(
-                                                    "UPDATE projects SET contract_file_data = NULL, contract_file_name = NULL WHERE contract_no = %s",
-                                                    (selected_proj_no,))
+                                                cur_del.execute("UPDATE projects SET contract_file_data = NULL, contract_file_name = NULL WHERE contract_no = %s", (selected_proj_no,))
                                                 conn_del.commit()
                                                 cur_del.close()
                                                 conn_del.close()
@@ -811,12 +685,9 @@ with tab1:
                                                 st.rerun()
                                             except Exception as e:
                                                 st.error(f"შეცდომა წაშლისას: {e}")
-
                                     with col_del_no:
                                         if st.button("არა", key=f"no_del_{selected_proj_no}"):
                                             st.rerun()
-                                # --------------------------------------------
-
                         except Exception as e:
                             st.error(f"შეცდომა ფაილის წამოღებისას: {e}")
                     else:
@@ -830,84 +701,176 @@ with tab1:
             mime="text/csv",
             key="download_detailed"
         )
-
     else:
         st.info("ბაზაში მონაცემები ჯერ არ არის. გამოიყენეთ მარცხენა პანელი პირველი პროექტის დასამატებლად.")
 
-# ---------------- 2. ჩანაწერების რედაქტირება / წაშლა ----------------
+
+# ==================== TAB REP: 📈 რეპორტები (ახალი ჩანართი) ====================
+with tab_rep:
+    st.subheader("📈 რეპორტები და ანალიტიკა")
+
+    if not calc_df.empty:
+        rep_db_years = calc_df['year'].unique().tolist() if 'year' in calc_df.columns else []
+        rep_available_years = sorted(list(set(rep_db_years + [2026, 2027, 2028])))
+        rep_selected_year = st.selectbox("📅 აირჩიეთ წელი რეპორტებისთვის", rep_available_years, index=rep_available_years.index(datetime.now().year) if datetime.now().year in rep_available_years else 0, key="rep_year_sel")
+
+        rep_filtered_df = calc_df[calc_df['year'] == rep_selected_year] if 'year' in calc_df.columns else pd.DataFrame(columns=calc_df.columns)
+        rep_year_short = str(rep_selected_year)[-2:]
+        rep_months_sorted = [f"{m}.{rep_year_short}" for m in ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]]
+        rep_furniture_df = rep_filtered_df[rep_filtered_df.get('product_type', '') != 'კარი'] if not rep_filtered_df.empty else pd.DataFrame()
+
+        st.markdown("### 📋 დიზაინის და დაკონტრაქტების უწყისი")
+
+        # დიზაინის ცხრილი
+        rep_d_cnt = {"სახელი და გვარი": "დიზაინი (რ-ბა)"}
+        rep_d_sum = {"სახელი და გვარი": "დიზაინი (თანხა)"}
+        for m in rep_months_sorted:
+            cnt = len(rep_furniture_df[(rep_furniture_df['month_year'] == m) & (rep_furniture_df['contract_type'] == "დიზაინი")]) if not rep_furniture_df.empty else 0
+            s = rep_furniture_df[(rep_furniture_df['month_year'] == m) & (rep_furniture_df['contract_type'] == "დიზაინი")]['amount'].sum() if not rep_furniture_df.empty else 0
+            rep_d_cnt[m] = int(cnt)
+            rep_d_sum[m] = round(float(s), 2)
+        df_rep_design = pd.DataFrame([rep_d_cnt, rep_d_sum])
+        df_rep_design.index = ["🔢", "💰"]
+
+        # დაკონტრაქტების ცხრილი
+        rep_c_cnt = {"სახელი და გვარი": "დაკონტრაქტება (რ-ბა)"}
+        rep_c_sum = {"სახელი და გვარი": "დაკონტრაქტება (თანხა)"}
+        for m in rep_months_sorted:
+            cnt = len(rep_furniture_df[(rep_furniture_df['month_year'] == m) & (rep_furniture_df['contract_type'] == "დაკონტრაქტება")]) if not rep_furniture_df.empty else 0
+            s = rep_furniture_df[(rep_furniture_df['month_year'] == m) & (rep_furniture_df['contract_type'] == "დაკონტრაქტება")]['amount'].sum() if not rep_furniture_df.empty else 0
+            rep_c_cnt[m] = int(cnt)
+            rep_c_sum[m] = round(float(s), 2)
+        df_rep_contract = pd.DataFrame([rep_c_cnt, rep_c_sum])
+        df_rep_contract.index = ["🤝", "💵"]
+
+        # % KPI ცხრილი
+        rep_kpi_rows = []
+        for d in designer_options:
+            des_kpi_dict = {"სახელი და გვარი": f"{d} დაკონტრაქტების %"}
+            for m in rep_months_sorted:
+                m_data = rep_furniture_df[(rep_furniture_df['month_year'] == m) & (rep_furniture_df['designer_name'] == d)] if not rep_furniture_df.empty else pd.DataFrame()
+                d_cnt_val = len(m_data[m_data['contract_type'] == "დიზაინი"]) if not m_data.empty else 0
+                c_cnt_val = len(m_data[m_data['contract_type'] == "დაკონტრაქტება"]) if not m_data.empty else 0
+                des_kpi_dict[m] = f"{(c_cnt_val / d_cnt_val) * 100:.1f}%" if d_cnt_val > 0 else "-"
+            rep_kpi_rows.append(des_kpi_dict)
+
+        team_kpi_dict = {"სახელი და გვარი": "🌟 გუნდური დაკონტრაქტების %"}
+        for m in rep_months_sorted:
+            m_data = rep_furniture_df[rep_furniture_df['month_year'] == m] if not rep_furniture_df.empty else pd.DataFrame()
+            d_cnt_val = len(m_data[m_data['contract_type'] == "დიზაინი"]) if not m_data.empty else 0
+            c_cnt_val = len(m_data[m_data['contract_type'] == "დაკონტრაქტება"]) if not m_data.empty else 0
+            team_kpi_dict[m] = f"{(c_cnt_val / d_cnt_val) * 100:.1f}%" if d_cnt_val > 0 else "-"
+        rep_kpi_rows.append(team_kpi_dict)
+
+        df_rep_kpi = pd.DataFrame(rep_kpi_rows)
+        kpi_emojis = ["🔹", "🔸", "▪️", "▫️", "🔹", "🔸"]
+        df_rep_kpi.index = [kpi_emojis[i % len(kpi_emojis)] for i in range(len(designer_options))] + ["🌟"]
+
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            st.markdown("#### 🎨 დიზაინი")
+            st.dataframe(df_rep_design.style.format({m: (lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and x > 0 else ("-" if x == 0 else f"{x:,d}")) for m in rep_months_sorted}, na_rep="-").set_properties(**{'text-align': 'right'}), use_container_width=True)
+        with col_r2:
+            st.markdown("#### 🤝 დაკონტრაქტება")
+            st.dataframe(df_rep_contract.style.format({m: (lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and x > 0 else ("-" if x == 0 else f"{x:,d}")) for m in rep_months_sorted}, na_rep="-").set_properties(**{'text-align': 'right'}), use_container_width=True)
+
+        st.markdown("#### 📈 დაკონტრაქტების % (ინდივიდუალური და გუნდური)")
+        st.dataframe(df_rep_kpi.style.set_properties(**{'text-align': 'right'}), use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### 📊 ვიზუალური სტატისტიკა და ჩარტები")
+
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            # 4.1. ჯამურად ნავაჭრი თვეების ჭრილში
+            monthly_turnover = rep_filtered_df.groupby('month_year')['amount'].sum().reindex(rep_months_sorted, fill_value=0).reset_index()
+            monthly_turnover.columns = ['თვე', 'ჯამური ნავაჭრი (₾)']
+            fig_turnover = px.bar(monthly_turnover, x='თვე', y='ჯამური ნავაჭრი (₾)', title=f"💰 ჯამური ნავაჭრი თვეების ჭრილში ({rep_selected_year})", text_auto='.2s', color_discrete_sequence=['#ff4b4b'])
+            st.plotly_chart(fig_turnover, use_container_width=True)
+
+        with col_m2:
+            # 4.2. ჯამურად გაფორმებული ხელშეკრულებების რაოდენობა
+            monthly_contracts = rep_filtered_df.groupby('month_year')['id'].count().reindex(rep_months_sorted, fill_value=0).reset_index()
+            monthly_contracts.columns = ['თვე', 'ხელშეკრულებების რაოდენობა']
+            fig_contracts = px.line(monthly_contracts, x='თვე', y='ხელშეკრულებების რაოდენობა', title=f"📄 გაფორმებული ხელშეკრულებების რაოდენობა ({rep_selected_year})", markers=True, color_discrete_sequence=['#0083B0'])
+            st.plotly_chart(fig_contracts, use_container_width=True)
+
+        st.markdown("#### 🥧 წილობრივი გადანაწილება (PIE ჩარტები)")
+        col_pie1, col_pie2, col_pie3 = st.columns(3)
+
+        with col_pie1:
+            # 4.3. PIE ჩარტი: პროექტის კატეგორია
+            if not rep_filtered_df.empty and 'project_category' in rep_filtered_df.columns:
+                fig_cat = px.pie(rep_filtered_df, names='project_category', values='amount', title="პროექტის კატეგორია (თანხობრივად)", hole=0.3)
+                st.plotly_chart(fig_cat, use_container_width=True)
+            else:
+                st.info("მონაცემები არ არის.")
+
+        with col_pie2:
+            # 4.4. PIE ჩარტი: პროექტის წყარო
+            if not rep_filtered_df.empty and 'project_source' in rep_filtered_df.columns:
+                fig_source = px.pie(rep_filtered_df, names='project_source', values='amount', title="პროექტის წყარო (თანხობრივად)", hole=0.3)
+                st.plotly_chart(fig_source, use_container_width=True)
+            else:
+                st.info("მონაცემები არ არის.")
+
+        with col_pie3:
+            # 4.5. PIE ჩარტი: პროდუქციის ტიპი
+            if not rep_filtered_df.empty and 'product_type' in rep_filtered_df.columns:
+                fig_prod = px.pie(rep_filtered_df, names='product_type', values='amount', title="პროდუქციის ტიპი (თანხობრივად)", hole=0.3)
+                st.plotly_chart(fig_prod, use_container_width=True)
+            else:
+                st.info("მონაცემები არ არის.")
+    else:
+        st.info("ბაზაში მონაცემები არ მოიძებნა რეპორტების გენერირებისთვის.")
+
+
+# ==================== TAB 2: ჩანაწერების რედაქტირება / წაშლა ====================
 def _txt(v):
     return "" if v is None or pd.isnull(v) else str(v)
-
 
 with tab2:
     st.subheader("✏️ ჩანაწერების რედაქტირება / წაშლა")
     if not df.empty:
-        # ვირჩევთ id-ით, რომ ერთნაირი ნომრის მქონე ჩანაწერები არ აირიოს
         edit_labels = {
             int(r['id']): f"{r['contract_no']} | {r['client_name']} | {_txt(r.get('project_source')) or 'Op-Art'}"
             for _, r in df.iterrows()
         }
-        record_id = st.selectbox("აირჩიეთ პროექტი რედაქტირებისთვის", list(edit_labels.keys()),
-                                 format_func=lambda i: edit_labels[i])
+        record_id = st.selectbox("აირჩიეთ პროექტი რედაქტირებისთვის", list(edit_labels.keys()), format_func=lambda i: edit_labels[i])
         record_to_edit = df[df['id'] == record_id].iloc[0]
 
         curr_source = _txt(record_to_edit.get('project_source')) or "Op-Art"
         is_outsource = "Outsource" in curr_source
         is_outsource_design = curr_source == "Outsource - დიზაინით"
         st.caption(f"პროექტის წყარო: **{curr_source}**")
-        k = f"_{record_id}"  # ველების გასაღები იცვლება პროექტის არჩევისას
+        k = f"_{record_id}"
 
         with st.form(f"edit_form{k}"):
-            # ---------- Outsource-ის დამატებითი ველები ----------
             if is_outsource:
                 st.markdown("**🤝 Outsource დიზაინერის მონაცემები**")
-                e_out_name = st.text_input("Outsource დიზაინერის სახელი და გვარი",
-                                           value=_txt(record_to_edit.get('outsource_designer_name')),
-                                           key=f"e_out_name{k}")
-                e_out_contract = st.text_input("Outsource დიზაინერის ხელშეკრულების №",
-                                               value=_txt(record_to_edit.get('outsource_contract_no')),
-                                               key=f"e_out_contract{k}")
+                e_out_name = st.text_input("Outsource დიზაინერის სახელი და გვარი", value=_txt(record_to_edit.get('outsource_designer_name')), key=f"e_out_name{k}")
+                e_out_contract = st.text_input("Outsource დიზაინერის ხელშეკრულების №", value=_txt(record_to_edit.get('outsource_contract_no')), key=f"e_out_contract{k}")
                 _pct = record_to_edit.get('outsource_commission_pct')
-                e_out_pct = st.number_input("Outsource დიზაინერის საკომისიო (%)", min_value=0.0, max_value=100.0,
-                                            value=float(_pct) * 100 if pd.notnull(_pct) else 2.0, step=0.5,
-                                            key=f"e_out_pct{k}")
+                e_out_pct = st.number_input("Outsource დიზაინერის საკომისიო (%)", min_value=0.0, max_value=100.0, value=float(_pct) * 100 if pd.notnull(_pct) else 2.0, step=0.5, key=f"e_out_pct{k}")
                 _inst = record_to_edit.get('outsource_installments')
-                e_out_inst = st.number_input("საკომისიოს რამდენ ნაწილად ვაძლევთ", min_value=1, max_value=12,
-                                             value=int(_inst) if pd.notnull(_inst) else 1, step=1,
-                                             key=f"e_out_inst{k}")
+                e_out_inst = st.number_input("საკომისიოს რამდენ ნაწილად ვაძლევთ", min_value=1, max_value=12, value=int(_inst) if pd.notnull(_inst) else 1, step=1, key=f"e_out_inst{k}")
                 st.markdown("**📄 პროექტის მონაცემები**")
 
-            # ---------- ხელშეკრულების ტიპი ----------
             curr_c_type = record_to_edit['contract_type']
             if is_outsource_design:
                 e_contract_type = "დაკონტრაქტება"
                 st.caption("ხელშეკრულების ტიპი: დაკონტრაქტება (Outsource - დიზაინით პროექტებზე უცვლელია)")
             else:
-                e_contract_type = st.selectbox("ხელშეკრულების ტიპი", contract_type_options,
-                                               index=contract_type_options.index(
-                                                   curr_c_type) if curr_c_type in contract_type_options else 0,
-                                               key=f"e_ctype{k}")
+                e_contract_type = st.selectbox("ხელშეკრულების ტიპი", contract_type_options, index=contract_type_options.index(curr_c_type) if curr_c_type in contract_type_options else 0, key=f"e_ctype{k}")
 
-            e_contract_no = st.text_input("ხელშეკრულების №", value=_txt(record_to_edit['contract_no']),
-                                          key=f"e_cno{k}")
-
+            e_contract_no = st.text_input("ხელშეკრულების №", value=_txt(record_to_edit['contract_no']), key=f"e_cno{k}")
             curr_category = _txt(record_to_edit.get('project_category')) or 'ინდივიდუალური'
-            e_project_category = st.selectbox("პროექტის კატეგორია", project_category_options,
-                                              index=project_category_options.index(
-                                                  curr_category) if curr_category in project_category_options else 0,
-                                              key=f"e_cat{k}")
-
+            e_project_category = st.selectbox("პროექტის კატეგორია", project_category_options, index=project_category_options.index(curr_category) if curr_category in project_category_options else 0, key=f"e_cat{k}")
             e_client = st.text_input("დამკვეთი", value=_txt(record_to_edit['client_name']), key=f"e_client{k}")
-
             curr_prod = record_to_edit['product_type']
-            e_product_type = st.selectbox("პროდუქცია", product_options,
-                                          index=product_options.index(curr_prod) if curr_prod in product_options else 0,
-                                          key=f"e_prod{k}")
+            e_product_type = st.selectbox("პროდუქცია", product_options, index=product_options.index(curr_prod) if curr_prod in product_options else 0, key=f"e_prod{k}")
+            e_amount = st.number_input("თანხა (₾)", value=float(record_to_edit['amount']), step=100.0, format="%.2f", key=f"e_amount{k}")
 
-            e_amount = st.number_input("თანხა (₾)", value=float(record_to_edit['amount']), step=100.0,
-                                       format="%.2f", key=f"e_amount{k}")
-
-            # ---------- დიზაინერი ----------
             curr_designer = record_to_edit['designer_name']
             if is_outsource_design:
                 e_designer = st.selectbox("დიზაინერი", ["ია პირტახია"], key=f"e_des{k}")
@@ -915,24 +878,18 @@ with tab2:
                 des_choices = list(all_designers)
                 if curr_designer and curr_designer not in des_choices:
                     des_choices.append(curr_designer)
-                e_designer = st.selectbox("დიზაინერი", des_choices,
-                                          index=des_choices.index(curr_designer) if curr_designer in des_choices else 0,
-                                          key=f"e_des{k}")
+                e_designer = st.selectbox("დიზაინერი", des_choices, index=des_choices.index(curr_designer) if curr_designer in des_choices else 0, key=f"e_des{k}")
 
             curr_delivery_str = _txt(record_to_edit.get('delivery_date_str'))
             try:
-                parsed_delivery_date = datetime.strptime(curr_delivery_str,
-                                                         "%d %b, %Y") if curr_delivery_str else datetime.now()
+                parsed_delivery_date = datetime.strptime(curr_delivery_str, "%d %b, %Y") if curr_delivery_str else datetime.now()
             except Exception:
                 parsed_delivery_date = datetime.now()
 
             e_delivery_date = st.date_input("ჩაბარების თარიღი", value=parsed_delivery_date, key=f"e_date{k}")
             e_delivery_date_str = e_delivery_date.strftime("%d %b, %Y")
-
             curr_status = _txt(record_to_edit.get('project_status')) or STATUS_ONGOING
-            e_status = st.selectbox("პროექტის სტატუსი", status_options,
-                                    index=status_options.index(curr_status) if curr_status in status_options else 0,
-                                    key=f"e_status{k}")
+            e_status = st.selectbox("პროექტის სტატუსი", status_options, index=status_options.index(curr_status) if curr_status in status_options else 0, key=f"e_status{k}")
 
             st.info(f"📅 შექმნის თარიღი (უცვლელი): {record_to_edit['created_at']}")
 
@@ -953,7 +910,6 @@ with tab2:
                                       "outsource_commission_pct = %s", "outsource_installments = %s"]
                         params += [e_out_name.strip(), e_out_contract.strip(), e_out_pct / 100.0, int(e_out_inst)]
                         if is_outsource_design:
-                            # ამ ტიპზე ხელფასის გამოსათვლელად იგივე % ინახება saved_commission_pct-შიც
                             set_parts.append("saved_commission_pct = %s")
                             params.append(e_out_pct / 100.0)
 
@@ -984,10 +940,10 @@ with tab2:
     else:
         st.info("რედაქტირებისთვის მონაცემები არ მოიძებნა.")
 
-# ---------------- 3. ცნობარების მართვა ----------------
+
+# ==================== TAB 3: ცნობარების მართვა ====================
 with tab3:
     st.subheader("⚙️ ცნობარების მართვა")
-
     col_des_top, col_mgr_top = st.columns(2)
 
     with col_des_top:
@@ -1001,9 +957,7 @@ with tab3:
                     display_des['commission_pct'] = 0.02
 
                 display_des['დიზაინის %'] = display_des['design_fee_pct'].apply(lambda x: f"{float(x) * 100:.2f}%")
-                display_des['დაკონტრაქტების %'] = display_des['commission_pct'].apply(
-                    lambda x: f"{float(x) * 100:.2f}%")
-
+                display_des['დაკონტრაქტების %'] = display_des['commission_pct'].apply(lambda x: f"{float(x) * 100:.2f}%")
                 display_des_table = display_des[['full_name', 'დიზაინის %', 'დაკონტრაქტების %']].reset_index(drop=True)
                 display_des_table.index = range(1, len(display_des_table) + 1)
                 st.dataframe(display_des_table, use_container_width=True)
@@ -1017,8 +971,7 @@ with tab3:
         if not managers_df.empty:
             display_mgr = managers_df.copy()
             pct_col_name = 'manager_pct' if 'manager_pct' in display_mgr.columns else display_mgr.columns[2]
-            display_mgr['ნავაჭრის %'] = display_mgr[pct_col_name].apply(
-                lambda x: f"{float(x) * 100:.2f}%" if pd.notnull(x) else "0.00%")
+            display_mgr['ნავაჭრის %'] = display_mgr[pct_col_name].apply(lambda x: f"{float(x) * 100:.2f}%" if pd.notnull(x) else "0.00%")
             display_mgr_table = display_mgr[['full_name', 'ნავაჭრის %']].reset_index(drop=True)
             display_mgr_table.columns = ['მენეჯერი', 'ჯამური ნავაჭრის %']
             display_mgr_table.index = range(1, len(display_mgr_table) + 1)
@@ -1027,39 +980,27 @@ with tab3:
             st.info("მენეჯერები არ მოიძებნა.")
 
     st.markdown("---")
-
     col_des_add, col_mgr_add = st.columns(2)
 
     with col_des_add:
         with st.form("add_designer_form", clear_on_submit=True):
             st.write("➕ **ახალი დიზაინერის დამატება**")
             new_designer_name = st.text_input("სახელი და გვარი", value="")
-            des_pct_input = st.number_input("დიზაინის პროცენტი (%)", min_value=0.0, max_value=100.0, value=0.0,
-                                            step=5.0)
-            contract_pct_input = st.number_input("დაკონტრაქტების პროცენტი (%)", min_value=0.0, max_value=100.0,
-                                                 value=0.0, step=0.5)
+            des_pct_input = st.number_input("დიზაინის პროცენტი (%)", min_value=0.0, max_value=100.0, value=0.0, step=5.0)
+            contract_pct_input = st.number_input("დაკონტრაქტების პროცენტი (%)", min_value=0.0, max_value=100.0, value=0.0, step=0.5)
 
             add_des_btn = st.form_submit_button("➕ დამატება")
-
             if add_des_btn:
                 if not new_designer_name.strip():
                     st.error("გთხოვთ შეიყვანოთ სახელი და გვარი!")
                 else:
                     try:
-                        conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
-                                                port=DB_PORT)
+                        conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                         cur = conn.cursor()
-
                         des_fee_decimal = des_pct_input / 100.0
                         contract_decimal = contract_pct_input / 100.0
-
-                        cur.execute(
-                            "INSERT INTO designers (full_name, design_fee_pct, commission_pct) VALUES (%s, %s, %s)",
-                            (new_designer_name.strip(), des_fee_decimal, contract_decimal))
-                        cur.execute(
-                            "INSERT INTO designer_history (designer_name, old_design_fee_pct, design_fee_pct, old_commission_pct, commission_pct) VALUES (%s, %s, %s, %s, %s)",
-                            (new_designer_name.strip(), None, des_fee_decimal, None, contract_decimal))
-
+                        cur.execute("INSERT INTO designers (full_name, design_fee_pct, commission_pct) VALUES (%s, %s, %s)", (new_designer_name.strip(), des_fee_decimal, contract_decimal))
+                        cur.execute("INSERT INTO designer_history (designer_name, old_design_fee_pct, design_fee_pct, old_commission_pct, commission_pct) VALUES (%s, %s, %s, %s, %s)", (new_designer_name.strip(), None, des_fee_decimal, None, contract_decimal))
                         conn.commit()
                         cur.close()
                         conn.close()
@@ -1072,28 +1013,19 @@ with tab3:
         with st.form("add_manager_form", clear_on_submit=True):
             st.write("➕ **ახალი მენეჯერის დამატება**")
             new_mgr_name = st.text_input("მენეჯერის სახელი და გვარი", value="")
-            mgr_pct_input = st.number_input("ჯამური ნავაჭრის პროცენტი (%)", min_value=0.0, max_value=100.0, value=0.0,
-                                            step=0.05, format="%.2f")
+            mgr_pct_input = st.number_input("ჯამური ნავაჭრის პროცენტი (%)", min_value=0.0, max_value=100.0, value=0.0, step=0.05, format="%.2f")
 
             add_mgr_btn = st.form_submit_button("➕ მენეჯერის დამატება")
-
             if add_mgr_btn:
                 if not new_mgr_name.strip():
                     st.error("გთხოვთ შეიყვანოთ სახელი და გვარი!")
                 else:
                     try:
-                        conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
-                                                port=DB_PORT)
+                        conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                         cur = conn.cursor()
-
                         mgr_decimal = mgr_pct_input / 100.0
-
-                        cur.execute("INSERT INTO managers (full_name, manager_pct) VALUES (%s, %s)",
-                                    (new_mgr_name.strip(), mgr_decimal))
-                        cur.execute(
-                            "INSERT INTO manager_history (manager_name, old_manager_pct, manager_pct) VALUES (%s, %s, %s)",
-                            (new_mgr_name.strip(), None, mgr_decimal))
-
+                        cur.execute("INSERT INTO managers (full_name, manager_pct) VALUES (%s, %s)", (new_mgr_name.strip(), mgr_decimal))
+                        cur.execute("INSERT INTO manager_history (manager_name, old_manager_pct, manager_pct) VALUES (%s, %s, %s)", (new_mgr_name.strip(), None, mgr_decimal))
                         conn.commit()
                         cur.close()
                         conn.close()
@@ -1103,52 +1035,30 @@ with tab3:
                         st.error(f"შეცდომა: {e}")
 
     col_des_edit, col_mgr_edit = st.columns(2)
-
     with col_des_edit:
         st.write("✏️ **არსებული დიზაინერის პროცენტების შეცვლა**")
         if not designers_df.empty:
             edit_options = designers_df['full_name'].tolist()
             if edit_options:
                 des_to_edit = st.selectbox("აირჩიეთ დიზაინერი", edit_options, key="sel_des_to_edit")
-
                 curr_row = designers_df[designers_df['full_name'] == des_to_edit].iloc[0]
-                curr_des_pct = float(curr_row['design_fee_pct']) * 100 if 'design_fee_pct' in curr_row and pd.notnull(
-                    curr_row['design_fee_pct']) else 50.0
-                curr_com_pct = float(curr_row['commission_pct']) * 100 if 'commission_pct' in curr_row and pd.notnull(
-                    curr_row['commission_pct']) else 2.0
+                curr_des_pct = float(curr_row['design_fee_pct']) * 100 if 'design_fee_pct' in curr_row and pd.notnull(curr_row['design_fee_pct']) else 50.0
+                curr_com_pct = float(curr_row['commission_pct']) * 100 if 'commission_pct' in curr_row and pd.notnull(curr_row['commission_pct']) else 2.0
 
                 with st.form("edit_designer_form"):
-                    new_des_pct = st.number_input("ახალი დიზაინის პროცენტი (%)", min_value=0.0, max_value=100.0,
-                                                  value=curr_des_pct, step=5.0)
-                    new_com_pct = st.number_input("ახალი დაკონტრაქტების პროცენტი (%)", min_value=0.0, max_value=100.0,
-                                                  value=curr_com_pct, step=0.5)
+                    new_des_pct = st.number_input("ახალი დიზაინის პროცენტი (%)", min_value=0.0, max_value=100.0, value=curr_des_pct, step=5.0)
+                    new_com_pct = st.number_input("ახალი დაკონტრაქტების პროცენტი (%)", min_value=0.0, max_value=100.0, value=curr_com_pct, step=0.5)
 
                     update_des_btn = st.form_submit_button("🔄 პროცენტების განახლება")
-
                     if update_des_btn:
                         try:
-                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
-                                                    port=DB_PORT)
+                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                             cur = conn.cursor()
+                            old_des_fee_val = float(curr_row['design_fee_pct']) if 'design_fee_pct' in curr_row and pd.notnull(curr_row['design_fee_pct']) else None
+                            old_com_val = float(curr_row['commission_pct']) if 'commission_pct' in curr_row and pd.notnull(curr_row['commission_pct']) else None
 
-                            old_des_fee_val = float(
-                                curr_row['design_fee_pct']) if 'design_fee_pct' in curr_row and pd.notnull(
-                                curr_row['design_fee_pct']) else None
-                            old_com_val = float(
-                                curr_row['commission_pct']) if 'commission_pct' in curr_row and pd.notnull(
-                                curr_row['commission_pct']) else None
-
-                            cur.execute("""
-                                UPDATE designers 
-                                SET design_fee_pct = %s, commission_pct = %s 
-                                WHERE full_name = %s
-                            """, (new_des_pct / 100.0, new_com_pct / 100.0, des_to_edit))
-
-                            cur.execute("""
-                                INSERT INTO designer_history (designer_name, old_design_fee_pct, design_fee_pct, old_commission_pct, commission_pct) 
-                                VALUES (%s, %s, %s, %s, %s)
-                            """, (des_to_edit, old_des_fee_val, new_des_pct / 100.0, old_com_val, new_com_pct / 100.0))
-
+                            cur.execute("UPDATE designers SET design_fee_pct = %s, commission_pct = %s WHERE full_name = %s", (new_des_pct / 100.0, new_com_pct / 100.0, des_to_edit))
+                            cur.execute("INSERT INTO designer_history (designer_name, old_design_fee_pct, design_fee_pct, old_commission_pct, commission_pct) VALUES (%s, %s, %s, %s, %s)", (des_to_edit, old_des_fee_val, new_des_pct / 100.0, old_com_val, new_com_pct / 100.0))
                             conn.commit()
                             cur.close()
                             conn.close()
@@ -1163,38 +1073,21 @@ with tab3:
             mgr_options = managers_df['full_name'].tolist()
             if mgr_options:
                 mgr_to_edit = st.selectbox("აირჩიეთ მენეჯერი", mgr_options, key="sel_mgr_to_edit")
-
                 curr_m_row = managers_df[managers_df['full_name'] == mgr_to_edit].iloc[0]
-                curr_m_pct = float(curr_m_row['manager_pct']) * 100 if 'manager_pct' in curr_m_row and pd.notnull(
-                    curr_m_row['manager_pct']) else 0.35
+                curr_m_pct = float(curr_m_row['manager_pct']) * 100 if 'manager_pct' in curr_m_row and pd.notnull(curr_m_row['manager_pct']) else 0.35
 
                 with st.form("edit_manager_form"):
-                    new_m_pct = st.number_input("ახალი ნავაჭრის პროცენტი (%)", min_value=0.0, max_value=100.0,
-                                                value=curr_m_pct, step=0.05, format="%.2f")
+                    new_m_pct = st.number_input("ახალი ნავაჭრის პროცენტი (%)", min_value=0.0, max_value=100.0, value=curr_m_pct, step=0.05, format="%.2f")
 
                     update_mgr_btn = st.form_submit_button("🔄 მენეჯერის პროცენტის განახლება")
-
                     if update_mgr_btn:
                         try:
-                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
-                                                    port=DB_PORT)
+                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                             cur = conn.cursor()
+                            old_m_pct_val = float(curr_m_row['manager_pct']) if 'manager_pct' in curr_m_row and pd.notnull(curr_m_row['manager_pct']) else None
 
-                            old_m_pct_val = float(
-                                curr_m_row['manager_pct']) if 'manager_pct' in curr_m_row and pd.notnull(
-                                curr_m_row['manager_pct']) else None
-
-                            cur.execute("""
-                                UPDATE managers 
-                                SET manager_pct = %s 
-                                WHERE full_name = %s
-                            """, (new_m_pct / 100.0, mgr_to_edit))
-
-                            cur.execute("""
-                                INSERT INTO manager_history (manager_name, old_manager_pct, manager_pct) 
-                                VALUES (%s, %s, %s)
-                            """, (mgr_to_edit, old_m_pct_val, new_m_pct / 100.0))
-
+                            cur.execute("UPDATE managers SET manager_pct = %s WHERE full_name = %s", (new_m_pct / 100.0, mgr_to_edit))
+                            cur.execute("INSERT INTO manager_history (manager_name, old_manager_pct, manager_pct) VALUES (%s, %s, %s)", (mgr_to_edit, old_m_pct_val, new_m_pct / 100.0))
                             conn.commit()
                             cur.close()
                             conn.close()
@@ -1204,7 +1097,6 @@ with tab3:
                             st.error(f"შეცდომა განახლებისას: {e}")
 
     col_des_del, col_mgr_del = st.columns(2)
-
     with col_des_del:
         if not designers_df.empty:
             del_designer_options = designers_df['full_name'].tolist()
@@ -1216,8 +1108,7 @@ with tab3:
 
                     if delete_des_btn:
                         try:
-                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
-                                                    port=DB_PORT)
+                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                             cur = conn.cursor()
                             cur.execute("DELETE FROM designers WHERE full_name = %s", (des_to_delete,))
                             conn.commit()
@@ -1239,8 +1130,7 @@ with tab3:
 
                     if delete_mgr_btn:
                         try:
-                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST,
-                                                    port=DB_PORT)
+                            conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                             cur = conn.cursor()
                             cur.execute("DELETE FROM managers WHERE full_name = %s", (mgr_to_delete,))
                             conn.commit()
@@ -1261,19 +1151,16 @@ with tab3:
             display_hist = pd.DataFrame()
             display_hist['ID'] = history_df['id']
             display_hist['დიზაინერი'] = history_df['designer_name']
-
             display_hist['დიზაინის % (ძველი ➔ ახალი)'] = history_df.apply(
                 lambda r: f"{float(r['old_design_fee_pct']) * 100:.2f}% ➔ {float(r['design_fee_pct']) * 100:.2f}%"
                 if 'old_design_fee_pct' in r and pd.notnull(r['old_design_fee_pct'])
                 else f"საწყისი ➔ {float(r['design_fee_pct']) * 100:.2f}%", axis=1
             )
-
             display_hist['დაკონტრაქტების % (ძველი ➔ ახალი)'] = history_df.apply(
                 lambda r: f"{float(r['old_commission_pct']) * 100:.2f}% ➔ {float(r['commission_pct']) * 100:.2f}%"
                 if 'old_commission_pct' in r and pd.notnull(r['old_commission_pct'])
                 else f"საწყისი ➔ {float(r['commission_pct']) * 100:.2f}%", axis=1
             )
-
             display_hist['ცვლილების თარიღი'] = history_df['changed_at']
             display_hist.index = range(1, len(display_hist) + 1)
             st.dataframe(display_hist, use_container_width=True)
@@ -1286,23 +1173,20 @@ with tab3:
             display_m_hist = pd.DataFrame()
             display_m_hist['ID'] = manager_history_df['id']
             display_m_hist['მენეჯერი'] = manager_history_df['manager_name']
-
-            pct_col_name = 'manager_pct' if 'manager_pct' in manager_history_df.columns else manager_history_df.columns[
-                2]
-
+            pct_col_name = 'manager_pct' if 'manager_pct' in manager_history_df.columns else manager_history_df.columns[2]
             display_m_hist['ნავაჭრის % (ძველი ➔ ახალი)'] = manager_history_df.apply(
                 lambda r: f"{float(r['old_manager_pct']) * 100:.2f}% ➔ {float(r[pct_col_name]) * 100:.2f}%"
                 if 'old_manager_pct' in r and pd.notnull(r['old_manager_pct'])
                 else f"საწყისი ➔ {float(r[pct_col_name]) * 100:.2f}%" if pd.notnull(r[pct_col_name]) else "-", axis=1
             )
-
             display_m_hist['ცვლილების თარიღი'] = manager_history_df['changed_at']
             display_m_hist.index = range(1, len(display_m_hist) + 1)
             st.dataframe(display_m_hist, use_container_width=True)
         else:
             st.info("მენეჯერების ისტორია ცარიელია.")
 
-# ---------------- 4. Outsource რეესტრი (ახალი ჩანართი) ----------------
+
+# ==================== TAB 4: Outsource რეესტრი ====================
 with tab4:
     st.subheader("📋 Outsource ხელშეკრულებებისა და პროექტების რეესტრი")
     if not df.empty and 'project_source' in df.columns:
