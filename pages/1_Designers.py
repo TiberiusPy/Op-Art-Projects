@@ -187,9 +187,10 @@ st.markdown("""
 
 st.title("🛋️ Op-Art - დიზაინერების ხელფასები და დეშბორდი")
 
-# მენიუ / ტაბები (4 ჩანართი)
-tab1, tab2, tab3, tab4 = st.tabs([
+# მენიუ / ტაბები (5 ჩანართი)
+tab1, tab_rep, tab2, tab3, tab4 = st.tabs([
     "📊 დეშბორდი და დამატება",
+    "📈 რეპორტები",
     "✏️ ჩანაწერების რედაქტირება / წაშლა",
     "⚙️ ცნობარების მართვა",
     "📋 Outsource რეესტრი"
@@ -589,44 +590,7 @@ with tab1:
         st.dataframe(styled_contract, use_container_width=True)
         st.write("")
 
-        st.markdown("#### 📈 დაკონტრაქტების % (ინდივიდუალური და გუნდური)")
-
-        kpi_rows = []
-        for d in designer_options:
-            des_kpi_dict = {"სახელი და გვარი": f"{d} - დაკონტრაქტების %"}
-            for m in all_months_sorted:
-                m_data = furniture_calc_df[(furniture_calc_df['month_year'] == m) & (
-                        furniture_calc_df['designer_name'] == d)] if not furniture_calc_df.empty else pd.DataFrame()
-                d_cnt = len(m_data[m_data['contract_type'] == "დიზაინი"]) if not m_data.empty else 0
-                c_cnt = len(m_data[m_data['contract_type'] == "დაკონტრაქტება"]) if not m_data.empty else 0
-                if d_cnt > 0:
-                    kpi = (c_cnt / d_cnt) * 100
-                    des_kpi_dict[m] = f"{kpi:.1f}%"
-                else:
-                    des_kpi_dict[m] = "-"
-            kpi_rows.append(des_kpi_dict)
-
-        team_kpi_dict = {"სახელი და გვარი": "🌟 გუნდური დაკონტრაქტების %"}
-        for m in all_months_sorted:
-            m_data = furniture_calc_df[
-                furniture_calc_df['month_year'] == m] if not furniture_calc_df.empty else pd.DataFrame()
-            d_cnt = len(m_data[m_data['contract_type'] == "დიზაინი"]) if not m_data.empty else 0
-            c_cnt = len(m_data[m_data['contract_type'] == "დაკონტრაქტება"]) if not m_data.empty else 0
-            if d_cnt > 0:
-                kpi = (c_cnt / d_cnt) * 100
-                team_kpi_dict[m] = f"{kpi:.1f}%"
-            else:
-                team_kpi_dict[m] = "-"
-        kpi_rows.append(team_kpi_dict)
-
-        df_kpi = pd.DataFrame(kpi_rows)
-        kpi_emojis = ["🔹", "🔸", "▪️", "▫️", "🔹", "🔸"]
-        df_kpi.index = [kpi_emojis[i % len(kpi_emojis)] + (" " * i) for i in range(len(designer_options))] + ["🌟"]
-
-        styled_kpi = df_kpi.style.set_properties(**{'text-align': 'right'})
-        st.dataframe(styled_kpi, use_container_width=True)
-
-        final_report_df = pd.concat([df_des_table, df_design_info, df_contract_info, df_kpi])
+        final_report_df = pd.concat([df_des_table, df_design_info, df_contract_info])
 
         csv_data_report = final_report_df.to_csv(index=True, sep=';').encode('utf-8-sig')
         col_btn.download_button(
@@ -833,6 +797,194 @@ with tab1:
 
     else:
         st.info("ბაზაში მონაცემები ჯერ არ არის. გამოიყენეთ მარცხენა პანელი პირველი პროექტის დასამატებლად.")
+
+# ---------------- 📈 რეპორტები ----------------
+with tab_rep:
+    st.subheader("📈 რეპორტები")
+
+    if df.empty or 'calc_df' not in globals():
+        st.info("რეპორტებისთვის მონაცემები ჯერ არ არის.")
+    else:
+        import altair as alt
+
+        _months_eng = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        _db_years = calc_df['year'].unique().tolist() if 'year' in calc_df.columns else []
+        _rep_years = sorted(list(set(_db_years + [2026, 2027, 2028])))
+        _cur_year = datetime.now().year
+        _rep_idx = _rep_years.index(_cur_year) if _cur_year in _rep_years else 0
+
+        rep_year = st.selectbox("📅 აირჩიეთ წელი", _rep_years, index=_rep_idx, key="rep_year_sel")
+        rep_df = calc_df[calc_df['year'] == rep_year].copy()
+        rep_months = [f"{m}.{str(rep_year)[-2:]}" for m in _months_eng]
+        rep_furniture = rep_df[rep_df['product_type'] != 'კარი'] if not rep_df.empty else pd.DataFrame()
+
+        _num_fmt = {m: (lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and x > 0 else (
+            "-" if x == 0 else f"{x:,d}")) for m in rep_months}
+
+        # ---------- 🎨 დიზაინი ----------
+        st.markdown("#### 🎨 დიზაინი")
+        _d_cnt = {"სახელი და გვარი": "დიზაინი (რ-ბა)"}
+        _d_sum = {"სახელი და გვარი": "დიზაინი (თანხა)"}
+        for m in rep_months:
+            _sel = rep_furniture[(rep_furniture['month_year'] == m) & (
+                    rep_furniture['contract_type'] == "დიზაინი")] if not rep_furniture.empty else pd.DataFrame()
+            _d_cnt[m] = int(len(_sel))
+            _d_sum[m] = round(float(_sel['amount'].sum()), 2) if not _sel.empty else 0.0
+        rep_design_info = pd.DataFrame([_d_cnt, _d_sum])
+        rep_design_info.index = ["🔢", "💰"]
+        st.dataframe(rep_design_info.style.format(_num_fmt, na_rep="-").set_properties(**{'text-align': 'right'}),
+                     use_container_width=True)
+        st.write("")
+
+        # ---------- 🤝 დაკონტრაქტება ----------
+        st.markdown("#### 🤝 დაკონტრაქტება")
+        _c_cnt = {"სახელი და გვარი": "დაკონტრაქტება (რ-ბა)"}
+        _c_sum = {"სახელი და გვარი": "დაკონტრაქტება (თანხა)"}
+        for m in rep_months:
+            _sel = rep_furniture[(rep_furniture['month_year'] == m) & (
+                    rep_furniture['contract_type'] == "დაკონტრაქტება")] if not rep_furniture.empty else pd.DataFrame()
+            _c_cnt[m] = int(len(_sel))
+            _c_sum[m] = round(float(_sel['amount'].sum()), 2) if not _sel.empty else 0.0
+        rep_contract_info = pd.DataFrame([_c_cnt, _c_sum])
+        rep_contract_info.index = ["🤝", "💵"]
+        st.dataframe(rep_contract_info.style.format(_num_fmt, na_rep="-").set_properties(**{'text-align': 'right'}),
+                     use_container_width=True)
+        st.write("")
+
+        # ---------- 📈 დაკონტრაქტების % ----------
+        st.markdown("#### 📈 დაკონტრაქტების % (ინდივიდუალური და გუნდური)")
+        rep_kpi_rows = []
+        for d in designer_options:
+            _row = {"სახელი და გვარი": f"{d} - დაკონტრაქტების %"}
+            for m in rep_months:
+                _m = rep_furniture[(rep_furniture['month_year'] == m) & (
+                        rep_furniture['designer_name'] == d)] if not rep_furniture.empty else pd.DataFrame()
+                _dc = len(_m[_m['contract_type'] == "დიზაინი"]) if not _m.empty else 0
+                _cc = len(_m[_m['contract_type'] == "დაკონტრაქტება"]) if not _m.empty else 0
+                _row[m] = f"{(_cc / _dc) * 100:.1f}%" if _dc > 0 else "-"
+            rep_kpi_rows.append(_row)
+
+        _team = {"სახელი და გვარი": "🌟 გუნდური დაკონტრაქტების %"}
+        for m in rep_months:
+            _m = rep_furniture[rep_furniture['month_year'] == m] if not rep_furniture.empty else pd.DataFrame()
+            _dc = len(_m[_m['contract_type'] == "დიზაინი"]) if not _m.empty else 0
+            _cc = len(_m[_m['contract_type'] == "დაკონტრაქტება"]) if not _m.empty else 0
+            _team[m] = f"{(_cc / _dc) * 100:.1f}%" if _dc > 0 else "-"
+        rep_kpi_rows.append(_team)
+
+        rep_kpi = pd.DataFrame(rep_kpi_rows)
+        _emojis = ["🔹", "🔸", "▪️", "▫️", "🔹", "🔸"]
+        rep_kpi.index = [_emojis[i % len(_emojis)] + (" " * i) for i in range(len(designer_options))] + ["🌟"]
+        st.dataframe(rep_kpi.style.set_properties(**{'text-align': 'right'}), use_container_width=True)
+
+        _rep_export = pd.concat([rep_design_info, rep_contract_info, rep_kpi])
+        st.download_button(
+            label="📥 რეპორტის ექსპორტი Excel-ში",
+            data=_rep_export.to_csv(index=True, sep=';').encode('utf-8-sig'),
+            file_name=f"reports_{rep_year}.csv",
+            mime="text/csv",
+            key="download_reports"
+        )
+
+        st.markdown("---")
+        st.markdown(f"### 📊 სტატისტიკა - {rep_year}")
+
+        if rep_df.empty:
+            st.info(f"{rep_year} წელს ჩანაწერები ჯერ არ არის.")
+        else:
+            rep_df['amount'] = pd.to_numeric(rep_df['amount'], errors='coerce').fillna(0.0)
+
+            # ---------- 1. ჯამური ნავაჭრი თვეების ჭრილში ----------
+            st.markdown("#### 💰 ჯამური ნავაჭრი თვეების ჭრილში")
+            _monthly = rep_df.groupby('month_year')['amount'].sum().reindex(rep_months, fill_value=0.0)
+            _turn_df = pd.DataFrame({"month": rep_months, "value": [float(v) for v in _monthly.values]})
+            st.metric(f"წლიური ჯამური ნავაჭრი ({rep_year})", f"{_turn_df['value'].sum():,.2f} ₾")
+
+            _bar = alt.Chart(_turn_df).mark_bar().encode(
+                x=alt.X("month:N", sort=rep_months, title="თვე"),
+                y=alt.Y("value:Q", title="ნავაჭრი (₾)"),
+                tooltip=[alt.Tooltip("month:N", title="თვე"),
+                         alt.Tooltip("value:Q", title="ნავაჭრი (₾)", format=",.2f")]
+            )
+            st.altair_chart(_bar, use_container_width=True)
+
+            _turn_table = pd.DataFrame([{"": "ნავაჭრი (₾)", **{m: float(v) for m, v in zip(rep_months, _turn_df['value'])}}])
+            _turn_table = _turn_table.set_index("")
+            st.dataframe(_turn_table.style.format(lambda x: f"{x:,.2f}" if x > 0 else "-"),
+                         use_container_width=True)
+            st.write("")
+
+            # ---------- 2. გაფორმებული ხელშეკრულებების რაოდენობა ----------
+            st.markdown("#### 📑 გაფორმებული ხელშეკრულებების რაოდენობა")
+            _n_all = len(rep_df)
+            _n_design = int((rep_df['contract_type'] == "დიზაინი").sum())
+            _n_contract = int((rep_df['contract_type'] == "დაკონტრაქტება").sum())
+            m1, m2, m3 = st.columns(3)
+            m1.metric("სულ ხელშეკრულება", f"{_n_all}")
+            m2.metric("დიზაინი", f"{_n_design}")
+            m3.metric("დაკონტრაქტება", f"{_n_contract}")
+
+            _cnt_rows = []
+            for m in rep_months:
+                _mm = rep_df[rep_df['month_year'] == m]
+                _cnt_rows.append({"month": m, "type": "დიზაინი",
+                                  "count": int((_mm['contract_type'] == "დიზაინი").sum())})
+                _cnt_rows.append({"month": m, "type": "დაკონტრაქტება",
+                                  "count": int((_mm['contract_type'] == "დაკონტრაქტება").sum())})
+            _cnt_df = pd.DataFrame(_cnt_rows)
+            _cnt_chart = alt.Chart(_cnt_df).mark_bar().encode(
+                x=alt.X("month:N", sort=rep_months, title="თვე"),
+                y=alt.Y("count:Q", title="რაოდენობა", axis=alt.Axis(tickMinStep=1)),
+                color=alt.Color("type:N", title="ტიპი"),
+                tooltip=[alt.Tooltip("month:N", title="თვე"), alt.Tooltip("type:N", title="ტიპი"),
+                         alt.Tooltip("count:Q", title="რაოდენობა")]
+            )
+            st.altair_chart(_cnt_chart, use_container_width=True)
+            st.write("")
+
+            # ---------- 3-5. PIE ჩარტები ----------
+            st.markdown("#### 🥧 განაწილება")
+            pie_mode = st.radio("აჩვენე", ["რაოდენობით", "თანხით"], horizontal=True, key="rep_pie_mode")
+
+            rep_df['cat_group'] = rep_df['project_category'].fillna("ინდივიდუალური").replace("", "ინდივიდუალური")
+            rep_df['src_group'] = rep_df['project_source'].fillna("Op-Art").apply(
+                lambda x: "Outsource" if "Outsource" in str(x) else "Op-Art")
+            rep_df['prod_group'] = rep_df['product_type'].fillna("ავეჯი").replace("", "ავეჯი")
+
+
+            def render_pie(title, col):
+                st.markdown(f"**{title}**")
+                if pie_mode == "რაოდენობით":
+                    g = rep_df.groupby(col).size().reset_index(name="value")
+                else:
+                    g = rep_df.groupby(col)['amount'].sum().reset_index(name="value")
+                g = g.rename(columns={col: "label"})
+                g = g[g['value'] > 0]
+                if g.empty:
+                    st.info("მონაცემები არ არის.")
+                    return
+                g['pct'] = (g['value'] / g['value'].sum() * 100).round(1)
+                chart = alt.Chart(g).mark_arc().encode(
+                    theta=alt.Theta("value:Q"),
+                    color=alt.Color("label:N", title=None),
+                    tooltip=[alt.Tooltip("label:N", title="ჯგუფი"),
+                             alt.Tooltip("value:Q", title=pie_mode, format=",.2f" if pie_mode == "თანხით" else ",d"),
+                             alt.Tooltip("pct:Q", title="წილი (%)")]
+                )
+                st.altair_chart(chart, use_container_width=True)
+                show = g[['label', 'value', 'pct']].copy()
+                show.columns = ["ჯგუფი", "თანხა (₾)" if pie_mode == "თანხით" else "რაოდენობა", "წილი (%)"]
+                show.index = range(1, len(show) + 1)
+                st.dataframe(show, use_container_width=True)
+
+
+            p1, p2, p3 = st.columns(3)
+            with p1:
+                render_pie("🏷️ პროექტის კატეგორია", "cat_group")
+            with p2:
+                render_pie("🏢 პროექტის წყარო", "src_group")
+            with p3:
+                render_pie("🛋️ პროდუქციის ტიპი", "prod_group")
 
 # ---------------- 2. ჩანაწერების რედაქტირება / წაშლა ----------------
 def _txt(v):
