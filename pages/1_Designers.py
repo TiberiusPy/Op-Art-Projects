@@ -198,6 +198,8 @@ tab1, tab2, tab3, tab4 = st.tabs([
 all_designers = designers_df['full_name'].tolist() if not designers_df.empty else ["თათა კუხალაშვილი",
                                                                                    "მარიამ ტაბატაძე", "გოჩა მუსერიძე"]
 designer_options = [d for d in all_designers if d != "ია პირტახია"]
+# ახალი პროექტის დამატებისას ჩანს ყველა დიზაინერი (ია პირტახიას ჩათვლით)
+designer_options_all = list(all_designers)
 
 product_options = ["ავეჯი", "კარი"]
 contract_type_options = ["დიზაინი", "დაკონტრაქტება"]
@@ -238,7 +240,7 @@ with tab1:
             if product_type == "კარი":
                 designer_name = st.selectbox("დიზაინერი", ["ია პირტახია"])
             else:
-                designer_name = st.selectbox("დიზაინერი", designer_options, index=None, placeholder="აირჩიე")
+                designer_name = st.selectbox("დიზაინერი", designer_options_all, index=None, placeholder="აირჩიე")
 
             d_date = st.date_input("ჩაბარების თარიღი", value=datetime.now())
             delivery_date_str = d_date.strftime("%d %b, %Y")
@@ -352,7 +354,7 @@ with tab1:
                 if product_type == "კარი":
                     designer_name = st.selectbox("დიზაინერი", ["ია პირტახია"])
                 else:
-                    designer_name = st.selectbox("დიზაინერი", designer_options, index=None, placeholder="აირჩიე")
+                    designer_name = st.selectbox("დიზაინერი", designer_options_all, index=None, placeholder="აირჩიე")
 
                 d_date = st.date_input("ჩაბარების თარიღი", value=datetime.now())
                 delivery_date_str = d_date.strftime("%d %b, %Y")
@@ -515,6 +517,10 @@ with tab1:
                     filtered_calc_df['month_year'] == m] if not filtered_calc_df.empty else pd.DataFrame()
                 if d == "ია პირტახია":
                     val = m_filtered['salary_ia'].max() if not m_filtered.empty else 0
+                    if not m_filtered.empty:
+                        own_mask = (m_filtered['product_type'] != 'კარი') & (m_filtered['designer_name'] == d) & (
+                                m_filtered['project_source'] != "Outsource - დიზაინით")
+                        val = val + m_filtered[own_mask]['salary_designer'].sum()
                 else:
                     furniture_m_filtered = m_filtered[m_filtered.get('product_type', '') != 'კარი']
                     val = furniture_m_filtered[furniture_m_filtered['designer_name'] == d][
@@ -829,55 +835,104 @@ with tab1:
         st.info("ბაზაში მონაცემები ჯერ არ არის. გამოიყენეთ მარცხენა პანელი პირველი პროექტის დასამატებლად.")
 
 # ---------------- 2. ჩანაწერების რედაქტირება / წაშლა ----------------
+def _txt(v):
+    return "" if v is None or pd.isnull(v) else str(v)
+
+
 with tab2:
     st.subheader("✏️ ჩანაწერების რედაქტირება / წაშლა")
     if not df.empty:
-        selected_contract = st.selectbox("აირჩიეთ ხელშეკრულების ნომერი რედაქტირებისთვის", df['contract_no'].tolist())
-        record_to_edit = df[df['contract_no'] == selected_contract].iloc[0]
-        record_id = int(record_to_edit['id']) if 'id' in record_to_edit else None
+        # ვირჩევთ id-ით, რომ ერთნაირი ნომრის მქონე ჩანაწერები არ აირიოს
+        edit_labels = {
+            int(r['id']): f"{r['contract_no']} | {r['client_name']} | {_txt(r.get('project_source')) or 'Op-Art'}"
+            for _, r in df.iterrows()
+        }
+        record_id = st.selectbox("აირჩიეთ პროექტი რედაქტირებისთვის", list(edit_labels.keys()),
+                                 format_func=lambda i: edit_labels[i])
+        record_to_edit = df[df['id'] == record_id].iloc[0]
 
-        with st.form("edit_form"):
+        curr_source = _txt(record_to_edit.get('project_source')) or "Op-Art"
+        is_outsource = "Outsource" in curr_source
+        is_outsource_design = curr_source == "Outsource - დიზაინით"
+        st.caption(f"პროექტის წყარო: **{curr_source}**")
+        k = f"_{record_id}"  # ველების გასაღები იცვლება პროექტის არჩევისას
+
+        with st.form(f"edit_form{k}"):
+            # ---------- Outsource-ის დამატებითი ველები ----------
+            if is_outsource:
+                st.markdown("**🤝 Outsource დიზაინერის მონაცემები**")
+                e_out_name = st.text_input("Outsource დიზაინერის სახელი და გვარი",
+                                           value=_txt(record_to_edit.get('outsource_designer_name')),
+                                           key=f"e_out_name{k}")
+                e_out_contract = st.text_input("Outsource დიზაინერის ხელშეკრულების №",
+                                               value=_txt(record_to_edit.get('outsource_contract_no')),
+                                               key=f"e_out_contract{k}")
+                _pct = record_to_edit.get('outsource_commission_pct')
+                e_out_pct = st.number_input("Outsource დიზაინერის საკომისიო (%)", min_value=0.0, max_value=100.0,
+                                            value=float(_pct) * 100 if pd.notnull(_pct) else 2.0, step=0.5,
+                                            key=f"e_out_pct{k}")
+                _inst = record_to_edit.get('outsource_installments')
+                e_out_inst = st.number_input("საკომისიოს რამდენ ნაწილად ვაძლევთ", min_value=1, max_value=12,
+                                             value=int(_inst) if pd.notnull(_inst) else 1, step=1,
+                                             key=f"e_out_inst{k}")
+                st.markdown("**📄 პროექტის მონაცემები**")
+
+            # ---------- ხელშეკრულების ტიპი ----------
             curr_c_type = record_to_edit['contract_type']
-            e_contract_type = st.selectbox("ხელშეკრულების ტიპი", contract_type_options,
-                                           index=contract_type_options.index(
-                                               curr_c_type) if curr_c_type in contract_type_options else 0)
+            if is_outsource_design:
+                e_contract_type = "დაკონტრაქტება"
+                st.caption("ხელშეკრულების ტიპი: დაკონტრაქტება (Outsource - დიზაინით პროექტებზე უცვლელია)")
+            else:
+                e_contract_type = st.selectbox("ხელშეკრულების ტიპი", contract_type_options,
+                                               index=contract_type_options.index(
+                                                   curr_c_type) if curr_c_type in contract_type_options else 0,
+                                               key=f"e_ctype{k}")
 
-            e_contract_no = st.text_input("ხელშეკრულების №", value=str(record_to_edit['contract_no']))
+            e_contract_no = st.text_input("ხელშეკრულების №", value=_txt(record_to_edit['contract_no']),
+                                          key=f"e_cno{k}")
 
-            curr_category = record_to_edit.get('project_category', 'ინდივიდუალური')
+            curr_category = _txt(record_to_edit.get('project_category')) or 'ინდივიდუალური'
             e_project_category = st.selectbox("პროექტის კატეგორია", project_category_options,
                                               index=project_category_options.index(
-                                                  curr_category) if curr_category in project_category_options else 0)
+                                                  curr_category) if curr_category in project_category_options else 0,
+                                              key=f"e_cat{k}")
 
-            e_client = st.text_input("დამკვეთი", value=str(record_to_edit['client_name']))
+            e_client = st.text_input("დამკვეთი", value=_txt(record_to_edit['client_name']), key=f"e_client{k}")
 
             curr_prod = record_to_edit['product_type']
             e_product_type = st.selectbox("პროდუქცია", product_options,
-                                          index=product_options.index(curr_prod) if curr_prod in product_options else 0)
+                                          index=product_options.index(curr_prod) if curr_prod in product_options else 0,
+                                          key=f"e_prod{k}")
 
-            e_amount = st.number_input("თანხა (₾)", value=float(record_to_edit['amount']), step=100.0, format="%.2f")
+            e_amount = st.number_input("თანხა (₾)", value=float(record_to_edit['amount']), step=100.0,
+                                       format="%.2f", key=f"e_amount{k}")
 
+            # ---------- დიზაინერი ----------
             curr_designer = record_to_edit['designer_name']
-
-            if e_product_type == "კარი" or record_to_edit.get('project_source', '') == "Outsource - დიზაინით":
-                e_designer = st.selectbox("დიზაინერი", ["ია პირტახია"])
+            if is_outsource_design:
+                e_designer = st.selectbox("დიზაინერი", ["ია პირტახია"], key=f"e_des{k}")
             else:
-                e_designer = st.selectbox("დიზაინერი", designer_options, index=designer_options.index(
-                    curr_designer) if curr_designer in designer_options else 0)
+                des_choices = list(all_designers)
+                if curr_designer and curr_designer not in des_choices:
+                    des_choices.append(curr_designer)
+                e_designer = st.selectbox("დიზაინერი", des_choices,
+                                          index=des_choices.index(curr_designer) if curr_designer in des_choices else 0,
+                                          key=f"e_des{k}")
 
-            curr_delivery_str = record_to_edit.get('delivery_date_str', '')
+            curr_delivery_str = _txt(record_to_edit.get('delivery_date_str'))
             try:
                 parsed_delivery_date = datetime.strptime(curr_delivery_str,
                                                          "%d %b, %Y") if curr_delivery_str else datetime.now()
-            except:
+            except Exception:
                 parsed_delivery_date = datetime.now()
 
-            e_delivery_date = st.date_input("ჩაბარების თარიღი", value=parsed_delivery_date)
+            e_delivery_date = st.date_input("ჩაბარების თარიღი", value=parsed_delivery_date, key=f"e_date{k}")
             e_delivery_date_str = e_delivery_date.strftime("%d %b, %Y")
 
-            curr_status = record_to_edit.get('project_status', STATUS_ONGOING)
+            curr_status = _txt(record_to_edit.get('project_status')) or STATUS_ONGOING
             e_status = st.selectbox("პროექტის სტატუსი", status_options,
-                                    index=status_options.index(curr_status) if curr_status in status_options else 0)
+                                    index=status_options.index(curr_status) if curr_status in status_options else 0,
+                                    key=f"e_status{k}")
 
             st.info(f"📅 შექმნის თარიღი (უცვლელი): {record_to_edit['created_at']}")
 
@@ -887,15 +942,25 @@ with tab2:
 
             if update_btn:
                 try:
+                    set_parts = ["contract_type = %s", "contract_no = %s", "project_category = %s",
+                                 "client_name = %s", "product_type = %s", "amount = %s", "designer_name = %s",
+                                 "delivery_date_str = %s", "project_status = %s"]
+                    params = [e_contract_type, e_contract_no.strip(), e_project_category, e_client.strip(),
+                              e_product_type, e_amount, e_designer, e_delivery_date_str, e_status]
+
+                    if is_outsource:
+                        set_parts += ["outsource_designer_name = %s", "outsource_contract_no = %s",
+                                      "outsource_commission_pct = %s", "outsource_installments = %s"]
+                        params += [e_out_name.strip(), e_out_contract.strip(), e_out_pct / 100.0, int(e_out_inst)]
+                        if is_outsource_design:
+                            # ამ ტიპზე ხელფასის გამოსათვლელად იგივე % ინახება saved_commission_pct-შიც
+                            set_parts.append("saved_commission_pct = %s")
+                            params.append(e_out_pct / 100.0)
+
+                    params.append(record_id)
                     conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASS, host=DB_HOST, port=DB_PORT)
                     cur = conn.cursor()
-                    cur.execute("""
-                        UPDATE projects 
-                        SET contract_type = %s, contract_no = %s, project_category = %s, client_name = %s, product_type = %s, amount = %s, designer_name = %s, delivery_date_str = %s, project_status = %s 
-                        WHERE id = %s
-                    """, (e_contract_type, e_contract_no.strip(), e_project_category, e_client.strip(), e_product_type,
-                          e_amount,
-                          e_designer, e_delivery_date_str, e_status, record_id))
+                    cur.execute(f"UPDATE projects SET {', '.join(set_parts)} WHERE id = %s", params)
                     conn.commit()
                     cur.close()
                     conn.close()
