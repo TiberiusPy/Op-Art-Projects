@@ -205,8 +205,8 @@ else:
     # ---------------- 🔍 ფილტრაცია: მხოლოდ დაკონტრაქტებული პროექტები (ტირეიანი ნომრები) ----------------
     designers_data['root_contract'] = designers_data['contract_no'].astype(str).apply(lambda x: x.split('-')[0])
 
-    # ყველა root_contract, რომელსაც აქვს მინიმუმ ერთი ქვე-ხელშეკრულება (მაგ: 261001-1)
-    contract_has_subcontract = designers_data[designers_data['contract_no'].astype(str).str.contains('-')][
+    # ყველა root_contract, რომელსაც აქვს მინიმუმ ერთი ჩანაწერი ტიპით "დაკონტრაქტება"
+    contract_has_subcontract = designers_data[designers_data['contract_type'] == "დაკონტრაქტება"][
         'root_contract'].unique()
 
     active_contract_df = designers_data[designers_data['root_contract'].isin(contract_has_subcontract)].copy()
