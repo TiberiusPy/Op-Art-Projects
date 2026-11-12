@@ -100,6 +100,8 @@ def ensure_tables():
             );
         """)
         cur.execute("ALTER TABLE customer_order_rooms ADD COLUMN IF NOT EXISTS delivery_date DATE;")
+        cur.execute("ALTER TABLE customer_order_rooms ADD COLUMN IF NOT EXISTS unit2 VARCHAR(50);")
+        cur.execute("ALTER TABLE customer_order_rooms ADD COLUMN IF NOT EXISTS quantity2 NUMERIC;")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS customer_order_payment_plan (
                 id SERIAL PRIMARY KEY,
@@ -479,6 +481,8 @@ else:
                             "quantity": num(r.get("quantity")),
                             "unit_price": num(r.get("unit_price")),
                             "delivery_date": to_date(r.get("delivery_date")),
+                            "unit2": _txt(r.get("unit2")) or "კვ. მ.",
+                            "quantity2": num(r.get("quantity2")),
                         })
                 st.session_state[session_key] = loaded_list
 
@@ -492,6 +496,8 @@ else:
                     "quantity": 0.0,
                     "unit_price": 0.0,
                     "delivery_date": None,
+                    "unit2": "კვ. მ.",
+                    "quantity2": 0.0,
                 })
                 st.rerun()
 
@@ -511,7 +517,13 @@ else:
                 qty_key = f"qty_{selected_contract}_{row_id}"
                 pr_key = f"pr_{selected_contract}_{row_id}"
                 dl_key = f"dl_{selected_contract}_{row_id}"
+                un2_key = f"un2_{selected_contract}_{row_id}"
+                qty2_key = f"qty2_{selected_contract}_{row_id}"
 
+                if un2_key not in st.session_state:
+                    st.session_state[un2_key] = room.get("unit2") or "კვ. მ."
+                if qty2_key not in st.session_state:
+                    st.session_state[qty2_key] = float(room.get("quantity2", 0.0))
                 if rc_key not in st.session_state:
                     st.session_state[rc_key] = room.get("room_code", "")
                 if ft_key not in st.session_state:
@@ -534,8 +546,13 @@ else:
                     curr_unit = st.session_state[un_key]
                     u_idx = unit_opts.index(curr_unit) if curr_unit in unit_opts else 0
                     unit = st.selectbox("ერთეული", unit_opts, index=u_idx, key=un_key)
+                    unit2_opts = ["კვ. მ.", "გრძ. მ."]
+                    curr_unit2 = st.session_state[un2_key]
+                    u2_idx = unit2_opts.index(curr_unit2) if curr_unit2 in unit2_opts else 0
+                    unit2 = st.selectbox("ერთეული 2", unit2_opts, index=u2_idx, key=un2_key)
                 with qty_col:
                     qty = st.number_input("რაოდენობა", min_value=0.0, step=1.0, format="%.2f", key=qty_key)
+                    qty2 = st.number_input("რაოდენობა 2", min_value=0.0, step=1.0, format="%.2f", key=qty2_key)
                 with pr_col:
                     price = st.number_input("ერთ. ფასი (₾)", min_value=0.0, step=10.0, format="%.2f", key=pr_key)
                 with tot_col:
@@ -560,6 +577,8 @@ else:
                     "unit_price": price,
                     "total_price": total,
                     "delivery_date": delivery_dt,
+                    "unit2": unit2,
+                    "quantity2": qty2,
                 })
                 st.markdown("---")
 
@@ -567,7 +586,8 @@ else:
                 st.session_state[session_key] = [r for r in st.session_state[session_key] if r["id"] != row_to_delete]
                 for k in [f"rc_{selected_contract}_{row_to_delete}", f"ft_{selected_contract}_{row_to_delete}",
                           f"un_{selected_contract}_{row_to_delete}", f"qty_{selected_contract}_{row_to_delete}",
-                          f"pr_{selected_contract}_{row_to_delete}", f"dl_{selected_contract}_{row_to_delete}"]:
+                          f"pr_{selected_contract}_{row_to_delete}", f"dl_{selected_contract}_{row_to_delete}",
+                          f"un2_{selected_contract}_{row_to_delete}", f"qty2_{selected_contract}_{row_to_delete}"]:
                     if k in st.session_state:
                         del st.session_state[k]
                 st.rerun()
@@ -779,10 +799,12 @@ else:
                             for r in updated_rooms:
                                 cursor.execute("""
                                     INSERT INTO customer_order_rooms
-                                        (contract_base, room_code, furniture_type, unit, quantity, unit_price, total_price, delivery_date)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                        (contract_base, room_code, furniture_type, unit, quantity, unit_price, total_price,
+                                         delivery_date, unit2, quantity2)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """, (selected_contract, r['room_code'], r['furniture_type'], r['unit'], r['quantity'],
-                                      r['unit_price'], r['total_price'], r['delivery_date']))
+                                      r['unit_price'], r['total_price'], r['delivery_date'], r['unit2'],
+                                      r['quantity2']))
 
                             cursor.execute("DELETE FROM customer_order_payment_plan WHERE contract_base = %s",
                                            (selected_contract,))
