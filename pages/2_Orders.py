@@ -1,6 +1,6 @@
 import re
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -87,6 +87,7 @@ def ensure_tables():
         cur.execute("ALTER TABLE customer_orders ADD COLUMN IF NOT EXISTS client_fullname VARCHAR(255);")
         cur.execute("ALTER TABLE customer_orders ADD COLUMN IF NOT EXISTS client_id_code VARCHAR(50);")
         cur.execute("ALTER TABLE customer_orders ADD COLUMN IF NOT EXISTS payment_stages INTEGER;")
+        cur.execute("ALTER TABLE customer_orders ADD COLUMN IF NOT EXISTS contact_person VARCHAR(255);")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS customer_order_rooms (
                 id SERIAL PRIMARY KEY,
@@ -141,7 +142,7 @@ def load_data():
     ensure_tables()
     projects_df = pd.DataFrame()
     orders_df = pd.DataFrame(columns=["contract_base", "client_fullname", "phone", "email", "address",
-                                      "client_id_code", "payment_stages"])
+                                      "client_id_code", "contact_person", "payment_stages"])
     rooms_df = pd.DataFrame(
         columns=["contract_base", "room_code", "furniture_type", "unit", "quantity", "unit_price", "total_price",
                  "delivery_date"])
@@ -264,577 +265,700 @@ def build_root_summary(projects):
     return rows
 
 
+def render_orders_tab(plan_df, pay_df, orders_df, projects_df):
+    """'Orders' ჩანართი: ვადაგადაცილებული და მისაღები (მოსალოდნელი) ჩარიცხვები."""
+    st.subheader("📦 Orders - ჩარიცხვების კონტროლი")
+
+    if plan_df is None or plan_df.empty:
+        st.info("ℹ️ გადახდის გრაფიკი ჯერ არცერთ ხელშეკრულებაზე არ არის შენახული. "
+                "ჩარიცხვები აქ გამოჩნდება, როცა „შეკვეთების“ ჩანართში გრაფიკს შეინახავთ.")
+        return
+
+    # --- დამკვეთის და საკონტაქტო ინფორმაცია ხელშეკრულების მიხედვით ---
+    info = {}
+    if projects_df is not None and not projects_df.empty and 'contract_no' in projects_df.columns:
+        tmp = projects_df.copy()
+        tmp['_root'] = tmp['contract_no'].astype(str).apply(lambda x: x.split('-')[0])
+        for root, g in tmp.groupby('_root', sort=False):
+            info[root] = {"client": _txt(g.iloc[0].get('client_name')), "contact": "", "phone": ""}
+    if orders_df is not None and not orders_df.empty and 'contract_base' in orders_df.columns:
+        for _, o in orders_df.iterrows():
+            d = info.setdefault(o['contract_base'], {"client": "", "contact": "", "phone": ""})
+            if _txt(o.get('client_fullname')):
+                d["client"] = _txt(o.get('client_fullname'))
+            d["contact"] = _txt(o.get('contact_person'))
+            d["phone"] = _txt(o.get('phone'))
+
+    # --- უკვე ჩარიცხული თანხა ეტაპების მიხედვით ---
+    paid_map = {}
+    if pay_df is not None and not pay_df.empty:
+        for _, p in pay_df.iterrows():
+            k = (p['contract_base'], int(p['stage_no']))
+            paid_map[k] = paid_map.get(k, 0.0) + num(p.get('amount'))
+
+    # --- გრაფიკის სტრიქონები, რომლებზეც ჯერ არ არის სრულად ჩარიცხული ---
+    rows = []
+    no_date = 0
+    for _, r in plan_df.iterrows():
+        planned = num(r.get('planned_amount'))
+        if planned <= 0:
+            continue
+        dt = to_date(r.get('planned_date'))
+        if dt is None:
+            no_date += 1
+            continue
+        root = r['contract_base']
+        stage = int(r['stage_no'])
+        paid = paid_map.get((root, stage), 0.0)
+        outstanding = planned - paid
+        if outstanding <= 0.005:
+            continue
+        i = info.get(root, {})
+        rows.append({
+            "root": root, "client": i.get("client", ""), "contact": i.get("contact", ""),
+            "phone": i.get("phone", ""), "stage": stage, "date": dt,
+            "planned": planned, "paid": paid, "outstanding": outstanding,
+        })
+
+    def build_table(items, overdue):
+        days_col = "დაგვიანება (დღე)" if overdue else "დარჩენილი დღე"
+        df = pd.DataFrame([{
+            "ხელშეკრულება": x["root"],
+            "დამკვეთი": x["client"],
+            "საკონტაქტო პირი": x["contact"],
+            "Tel": x["phone"],
+            "ეტაპი": f"{STAGE_HEADERS.get(x['stage'], x['stage'])} ეტაპი",
+            "ჩარიცხვის თარიღი": x["date"].strftime("%d.%m.%Y"),
+            days_col: (TODAY - x["date"]).days if overdue else (x["date"] - TODAY).days,
+            "გრაფიკით გადასახდელი": fmt_money(x["planned"]),
+            "უკვე ჩარიცხული": fmt_money(x["paid"]) if x["paid"] else "-",
+            "მისაღები თანხა": fmt_money(x["outstanding"]),
+        } for x in items])
+        df.index = range(1, len(df) + 1)
+        return df
+
+    # ==================== 🔴 ვადაგადაცილებული ჩარიცხვები ====================
+    overdue = sorted([x for x in rows if x["date"] < TODAY], key=lambda x: x["date"])
+    st.markdown("### 🔴 ვადაგადაცილებული ჩარიცხვები")
+    if overdue:
+        total_overdue = sum(x["outstanding"] for x in overdue)
+        st.error(f"გადაცილებულია {len(overdue)} ჩარიცხვა, სულ **{fmt_money(total_overdue)} ₾**")
+        st.dataframe(build_table(overdue, True), use_container_width=True)
+    else:
+        st.success("✅ ვადაგადაცილებული ჩარიცხვები არ არის.")
+
+    st.markdown("---")
+
+    # ==================== 🟢 მისაღები ჩარიცხვები ====================
+    st.markdown("### 🟢 მისაღები ჩარიცხვები")
+    opts = ["10 დღე", "15 დღე", "30 დღე", "60 დღე", "90 დღე", "სხვა"]
+    choice = st.radio("პერიოდი: დღეიდან მომდევნო", opts, index=0, horizontal=True, key="orders_period")
+    if choice == "სხვა":
+        days = int(st.number_input("დღეების რაოდენობა", min_value=1, max_value=730, value=45, step=1,
+                                   key="orders_period_custom"))
+    else:
+        days = int(choice.split()[0])
+    end_date = TODAY + timedelta(days=days)
+
+    upcoming = sorted([x for x in rows if TODAY <= x["date"] <= end_date], key=lambda x: x["date"])
+    st.caption(f"პერიოდი: {TODAY.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}")
+    if upcoming:
+        total_upcoming = sum(x["outstanding"] for x in upcoming)
+        st.info(f"მისაღებია {len(upcoming)} ჩარიცხვა, სულ **{fmt_money(total_upcoming)} ₾**")
+        st.dataframe(build_table(upcoming, False), use_container_width=True)
+    else:
+        st.info(f"ℹ️ მომდევნო {days} დღეში მისაღები ჩარიცხვები არ არის.")
+
+    if no_date:
+        st.caption(f"⚠️ {no_date} ეტაპს თანხა აქვს, მაგრამ თარიღი არ არის მითითებული - ცხრილებში არ ჩანს.")
+    st.caption("მონაცემები მოდის ბაზიდან (შენახული გრაფიკი და ბუღალტრის ჩარიცხვები).")
+
+
 # ---------------- 📥 მონაცემების ჩატვირთვა ----------------
 designers_data, orders_data, rooms_data, plan_data, pay_data = load_data()
 
-if designers_data.empty:
-    st.info("ℹ️ დიზაინერების მოდულიდან ჯერ არცერთი პროექტი არ არის გადმოცემული (ან 'projects' ცხრილი ცარიელია).")
-else:
-    if 'project_status' in designers_data.columns:
-        designers_data['project_status'] = designers_data['project_status'].fillna(STATUS_ONGOING)
+tab_main, tab_orders = st.tabs(["🛒 შეკვეთები და პროექტები", "📦 Orders"])
+
+with tab_main:
+    if designers_data.empty:
+        st.info("ℹ️ დიზაინერების მოდულიდან ჯერ არცერთი პროექტი არ არის გადმოცემული (ან 'projects' ცხრილი ცარიელია).")
     else:
-        designers_data['project_status'] = STATUS_ONGOING
+        if 'project_status' in designers_data.columns:
+            designers_data['project_status'] = designers_data['project_status'].fillna(STATUS_ONGOING)
+        else:
+            designers_data['project_status'] = STATUS_ONGOING
 
-    # ---------------- 🔍 ფილტრაცია: მხოლოდ დაკონტრაქტებული პროექტები (ტირეიანი ნომრები) ----------------
-    designers_data['root_contract'] = designers_data['contract_no'].astype(str).apply(lambda x: x.split('-')[0])
+        # ---------------- 🔍 ფილტრაცია: მხოლოდ დაკონტრაქტებული პროექტები (ტირეიანი ნომრები) ----------------
+        designers_data['root_contract'] = designers_data['contract_no'].astype(str).apply(lambda x: x.split('-')[0])
 
-    # ყველა root_contract, რომელსაც აქვს მინიმუმ ერთი ჩანაწერი ტიპით "დაკონტრაქტება"
-    contract_has_subcontract = designers_data[designers_data['contract_type'] == "დაკონტრაქტება"][
-        'root_contract'].unique()
+        # ყველა root_contract, რომელსაც აქვს მინიმუმ ერთი ჩანაწერი ტიპით "დაკონტრაქტება"
+        contract_has_subcontract = designers_data[designers_data['contract_type'] == "დაკონტრაქტება"][
+            'root_contract'].unique()
 
-    active_contract_df = designers_data[designers_data['root_contract'].isin(contract_has_subcontract)].copy()
+        active_contract_df = designers_data[designers_data['root_contract'].isin(contract_has_subcontract)].copy()
 
-    if active_contract_df.empty:
-        st.info(
-            "ℹ️ ამ მომენტისთვის არცერთ დიზაინის პროექტზე არ არის გაფორმებული დაკონტრაქტება (ქვე-ხელშეკრულება). მყიდველის შეკვეთები გამოჩნდება მხოლოდ დაკონტრაქტების შექმნის შემდეგ.")
-    else:
-        root_rows = build_root_summary(active_contract_df)
-        all_roots = [r["root"] for r in root_rows]
-        client_by_root = {r["root"]: r["client"] for r in root_rows}
-
-        # ---------------- ⏰ ჩაბარების ვადის შეტყობინება (10 დღით ადრე) ----------------
-        due_soon = [r for r in root_rows if r["days_left"] is not None and r["days_left"] <= ALERT_DAYS]
-        due_soon.sort(key=lambda r: r["deadline"])
-        if due_soon:
-            lines = []
-            for r in due_soon:
-                d = r["days_left"]
-                date_txt = r["deadline"].strftime("%d.%m.%Y")
-                who = f"**{r['root']}** ({r['client']})" if r["client"] else f"**{r['root']}**"
-                if d < 0:
-                    lines.append(f"🔴 {who}: ჩაბარების ვადა **გადაცილებულია {-d} დღით** ({date_txt})")
-                elif d == 0:
-                    lines.append(f"🔴 {who}: ჩაბარების ვადა **დღეს არის** ({date_txt})")
-                else:
-                    lines.append(f"🟠 {who}: ჩაბარებამდე დარჩენილია **{d} დღე** ({date_txt})")
-            msg = f"⏰ **ჩაბარების ვადის შეხსენება** ({ALERT_DAYS} დღით ადრე):\n\n" + "\n\n".join(lines)
-            if min(r["days_left"] for r in due_soon) <= 0:
-                st.error(msg)
-            else:
-                st.warning(msg)
-
-        # ---------------- 🔢 6-ნიშნა კოდის შემოწმება ----------------
-        invalid_codes = {}
-        if not rooms_data.empty and 'contract_base' in rooms_data.columns:
-            for root in all_roots:
-                rr = rooms_data[rooms_data['contract_base'] == root]
-                if rr.empty:
-                    continue
-                bad_count = int((~rr['room_code'].apply(is_valid_code)).sum())
-                if bad_count:
-                    invalid_codes[root] = bad_count
-
-        if invalid_codes:
-            code_lines = ", ".join([f"**{root}** ({cnt} პროდუქტი)" for root, cnt in invalid_codes.items()])
-            st.error(
-                f"🔢 **6-ნიშნა ინდივიდუალური კოდი ჩაწერილი არ არის** (ან არ არის 6 ციფრი) შემდეგ ხელშეკრულებებზე. "
-                f"გთხოვთ ჩაწეროთ: {code_lines}")
-
-        # ---------------- 🔔 შეუვსებელი პროდუქტები ----------------
-        unfilled_projects = []
-        for root in all_roots:
-            rooms_count = 0
-            if not rooms_data.empty and 'contract_base' in rooms_data.columns:
-                rooms_count = len(rooms_data[rooms_data['contract_base'] == root])
-            if rooms_count == 0:
-                unfilled_projects.append(root)
-
-        if unfilled_projects:
-            unfilled_str = ", ".join([f"**{p}**" for p in unfilled_projects])
-            st.error(
-                f"🔢 **6-ნიშნა კოდი ჩაწერილი არ არის!** შემდეგ ხელშეკრულებებზე პროდუქტები ჯერ არ არის ჩაშლილი. "
-                f"გთხოვთ ჩაშალოთ პროდუქტებად და თითოეულს ჩაუწეროთ 6-ნიშნა კოდი (მაგ. 001546): {unfilled_str}")
-
-        # ---------------- 📋 რეესტრი ----------------
-        st.subheader("📋 აქტიური დაკონტრაქტებული ხელშეკრულებების რეესტრი (მთავარი ნომრები)")
-
-        grouped_summary = pd.DataFrame([{
-            'ხელშეკრულების N': r["root"],
-            'სტატუსი': "✅ დასრულებული" if r["done"] else "🛠️ მიმდინარე",
-            'დიზაინერი': r["designer"],
-            'დამკვეთი': r["client"],
-            'პროდუქციის ტიპი': r["product"],
-            'პროექტის წყარო': r["source"],
-            'კატეგორია': r["category"],
-            'ჩაბარების ვადა': r["deadline"].strftime("%d.%m.%Y") if r["deadline"] else "-",
-            'დარჩენილი დღე': r["days_left"] if r["days_left"] is not None else "-",
-            'ჯამური თანხა': r["amount"],
-        } for r in root_rows])
-        grouped_summary.index = range(1, len(grouped_summary) + 1)
-
-        styled_grouped = grouped_summary.style.format({
-            'ჯამური თანხა': lambda x: f"{x:,.2f}" if pd.notnull(x) else "-"
-        }).set_properties(**{'text-align': 'left'})
-
-        st.dataframe(styled_grouped, use_container_width=True)
-
-        st.markdown("---")
-        st.subheader("⚙️ შეკვეთის დეტალიზაცია და პროდუქტების დეტალური ჩაშლა")
-
-        selected_contract = st.selectbox("აირჩიეთ ხელშეკრულების ძირითადი ნომერი:", all_roots)
-
-        if selected_contract:
-            sub_contracts = designers_data[designers_data['root_contract'] == selected_contract].copy()
-
-            st.write(f"**არჩეული ხელშეკრულების ყველა კომპონენტი ({selected_contract}):**")
-
-            sub_contracts['status_display'] = sub_contracts['project_status'].apply(
-                lambda x: "✅ დასრულებული" if x == STATUS_DONE else "🛠️ მიმდინარე")
-            sub_contracts['file_display'] = sub_contracts['has_file'].apply(
-                lambda x: "✅ ატვირთულია" if x else "❌ არ არის") if 'has_file' in sub_contracts.columns else "-"
-
-            detail_columns = [
-                ('status_display', 'სტატუსი'),
-                ('created_at', 'შექმნის თარიღი'),
-                ('project_source', 'პროექტის წყარო'),
-                ('contract_type', 'ხელშეკრულების ტიპი'),
-                ('contract_no', 'ხელშეკრულების №'),
-                ('project_category', 'პროექტის კატეგორია'),
-                ('client_name', 'დამკვეთი'),
-                ('product_type', 'პროდუქციის ტიპი'),
-                ('amount', 'თანხა'),
-                ('designer_name', 'დიზაინერი'),
-                ('delivery_date_str', 'ჩაბარების თარიღი'),
-                ('outsource_designer_name', 'Outsource დიზაინერი'),
-                ('outsource_contract_no', 'Outsource ხელშეკრულების №'),
-                ('outsource_commission_pct', 'Outsource საკომისიო'),
-                ('outsource_installments', 'ნაწილების რ-ბა'),
-                ('file_display', 'ფაილი'),
-            ]
-            detail_columns = [(src, dst) for src, dst in detail_columns if src in sub_contracts.columns]
-            sub_view = sub_contracts[[src for src, _ in detail_columns]].copy()
-            sub_view.columns = [dst for _, dst in detail_columns]
-
-            # Outsource სვეტები ჩანს მხოლოდ მაშინ, თუ ამ ხელშეკრულებაში Outsource პროექტია
-            if 'Outsource დიზაინერი' in sub_view.columns and sub_view['Outsource დიზაინერი'].isna().all():
-                sub_view = sub_view.drop(columns=[c for c in
-                                                  ['Outsource დიზაინერი', 'Outsource ხელშეკრულების №',
-                                                   'Outsource საკომისიო', 'ნაწილების რ-ბა'] if c in sub_view.columns])
-            if 'Outsource საკომისიო' in sub_view.columns:
-                sub_view['Outsource საკომისიო'] = sub_view['Outsource საკომისიო'].apply(
-                    lambda x: f"{float(x) * 100:.2f}%" if pd.notnull(x) else "-")
-            sub_view.index = range(1, len(sub_view) + 1)
-
-            styled_sub_contracts = sub_view.style.format({
-                'თანხა': lambda x: f"{x:,.2f}" if pd.notnull(x) else "-"
-            }, na_rep="-").set_properties(**{'text-align': 'left'})
-
-            st.dataframe(styled_sub_contracts, use_container_width=True)
-
-            sub_contracts_filtered = designers_data[(designers_data['root_contract'] == selected_contract) & (
-                    designers_data['contract_type'] == "დაკონტრაქტება")]
-            allowed_contract_amount = sub_contracts_filtered[
-                'amount'].sum() if not sub_contracts_filtered.empty else 0.0
-
+        if active_contract_df.empty:
             st.info(
-                f"💡 ამ ხელშეკრულების მიხედვით დასაკონტრაქტებელი (საწარმოო) ლიმიტი არის: **{allowed_contract_amount:,.2f} ₾** (დიზაინის თანხა გამოკლებულია)")
+                "ℹ️ ამ მომენტისთვის არცერთ დიზაინის პროექტზე არ არის გაფორმებული დაკონტრაქტება (ქვე-ხელშეკრულება). მყიდველის შეკვეთები გამოჩნდება მხოლოდ დაკონტრაქტების შექმნის შემდეგ.")
+        else:
+            root_rows = build_root_summary(active_contract_df)
+            all_roots = [r["root"] for r in root_rows]
+            client_by_root = {r["root"]: r["client"] for r in root_rows}
 
-            existing_client_fullname = client_by_root.get(selected_contract, "")
-            existing_client_id_code = ""
-            existing_phone = ""
-            existing_email = ""
-            existing_address = ""
-            existing_stages = None
-
-            if not orders_data.empty and 'contract_base' in orders_data.columns:
-                match_row = orders_data[orders_data['contract_base'] == selected_contract]
-                if not match_row.empty:
-                    if pd.notna(match_row.iloc[0].get('client_fullname')):
-                        existing_client_fullname = match_row.iloc[0]['client_fullname']
-                    existing_client_id_code = _txt(match_row.iloc[0].get('client_id_code'))
-                    existing_phone = _txt(match_row.iloc[0].get('phone'))
-                    existing_email = _txt(match_row.iloc[0].get('email'))
-                    existing_address = _txt(match_row.iloc[0].get('address'))
-                    _st = match_row.iloc[0].get('payment_stages')
-                    if _st is not None and pd.notna(_st):
-                        existing_stages = int(_st)
-
-            # დამკვეთისა და საკონტაქტო მონაცემები
-            st.markdown(f"### დამკვეთისა და საკონტაქტო მონაცემები: {selected_contract}")
-            col1, col2 = st.columns(2)
-            with col1:
-                manual_client_fullname = st.text_input("დამკვეთი", value=existing_client_fullname,
-                                                       key=f"client_fn_{selected_contract}")
-                manual_client_id_code = st.text_input("პ/ნ ან საიდენტიფიკაციო კოდი", value=existing_client_id_code,
-                                                      key=f"client_idc_{selected_contract}")
-                manual_phone = st.text_input("Tel (საკონტაქტო ნომერი)", value=existing_phone,
-                                             key=f"phone_{selected_contract}")
-            with col2:
-                manual_email = st.text_input("E-mail", value=existing_email, key=f"email_{selected_contract}")
-                manual_address = st.text_input("მისამართი", value=existing_address, key=f"addr_{selected_contract}")
-
-            st.markdown("---")
-            st.markdown("#### 🗄️ პროდუქტების დეტალური ჩაშლა")
-
-            # სესიის ინიციალიზაცია პროდუქტებისთვის
-            session_key = f"rooms_list_{selected_contract}"
-            if session_key not in st.session_state:
-                loaded_list = []
-                if not rooms_data.empty and 'contract_base' in rooms_data.columns:
-                    existing_rooms = rooms_data[rooms_data['contract_base'] == selected_contract]
-                    for _, r in existing_rooms.iterrows():
-                        loaded_list.append({
-                            "id": str(uuid.uuid4()),
-                            "room_code": _txt(r.get("room_code")),
-                            "furniture_type": _txt(r.get("furniture_type")),
-                            "unit": _txt(r.get("unit")) or "კვ. მ.",
-                            "quantity": num(r.get("quantity")),
-                            "unit_price": num(r.get("unit_price")),
-                            "delivery_date": to_date(r.get("delivery_date")),
-                            "unit2": _txt(r.get("unit2")) or "კვ. მ.",
-                            "quantity2": num(r.get("quantity2")),
-                        })
-                st.session_state[session_key] = loaded_list
-
-            # ➕ ოთახის დამატების ღილაკი
-            if st.button("➕ ოთახის / პროექტის დამატება", key=f"add_room_btn_{selected_contract}"):
-                st.session_state[session_key].append({
-                    "id": str(uuid.uuid4()),
-                    "room_code": "",
-                    "furniture_type": "",
-                    "unit": "კვ. მ.",
-                    "quantity": 0.0,
-                    "unit_price": 0.0,
-                    "delivery_date": None,
-                    "unit2": "კვ. მ.",
-                    "quantity2": 0.0,
-                })
-                st.rerun()
-
-            updated_rooms = []
-            row_to_delete = None
-            total_rooms_amount = 0.0
-
-            for i, room in enumerate(st.session_state[session_key]):
-                row_id = room["id"]
-                st.markdown(f"**ოთახი / პროექტი #{i + 1}**")
-                (rc_col, ft_col, un_col, qty_col, pr_col, tot_col, dl_col, del_col) = st.columns(
-                    [1.8, 1.8, 1.2, 1, 1.2, 1.2, 1.5, 0.8])
-
-                rc_key = f"rc_{selected_contract}_{row_id}"
-                ft_key = f"ft_{selected_contract}_{row_id}"
-                un_key = f"un_{selected_contract}_{row_id}"
-                qty_key = f"qty_{selected_contract}_{row_id}"
-                pr_key = f"pr_{selected_contract}_{row_id}"
-                dl_key = f"dl_{selected_contract}_{row_id}"
-                un2_key = f"un2_{selected_contract}_{row_id}"
-                qty2_key = f"qty2_{selected_contract}_{row_id}"
-
-                if un2_key not in st.session_state:
-                    st.session_state[un2_key] = room.get("unit2") or "კვ. მ."
-                if qty2_key not in st.session_state:
-                    st.session_state[qty2_key] = float(room.get("quantity2", 0.0))
-                if rc_key not in st.session_state:
-                    st.session_state[rc_key] = room.get("room_code", "")
-                if ft_key not in st.session_state:
-                    st.session_state[ft_key] = room.get("furniture_type", "")
-                if un_key not in st.session_state:
-                    st.session_state[un_key] = room.get("unit", "კვ. მ.")
-                if qty_key not in st.session_state:
-                    st.session_state[qty_key] = float(room.get("quantity", 0.0))
-                if pr_key not in st.session_state:
-                    st.session_state[pr_key] = float(room.get("unit_price", 0.0))
-
-                with rc_col:
-                    r_code = st.text_input("ინდივიდუალური კოდი (6 ციფრი)", key=rc_key, max_chars=6)
-                    if not is_valid_code(r_code):
-                        st.caption("⚠️ ჩაწერეთ 6-ნიშნა კოდი")
-                with ft_col:
-                    f_type = st.text_input("ავეჯის ტიპი", key=ft_key)
-                with un_col:
-                    unit_opts = ["კვ. მ.", "გრძ. მ.", "ცალი"]
-                    curr_unit = st.session_state[un_key]
-                    u_idx = unit_opts.index(curr_unit) if curr_unit in unit_opts else 0
-                    unit = st.selectbox("ერთეული", unit_opts, index=u_idx, key=un_key)
-                    unit2_opts = ["კვ. მ.", "გრძ. მ."]
-                    curr_unit2 = st.session_state[un2_key]
-                    u2_idx = unit2_opts.index(curr_unit2) if curr_unit2 in unit2_opts else 0
-                    unit2 = st.selectbox("ერთეული 2", unit2_opts, index=u2_idx, key=un2_key)
-                with qty_col:
-                    qty = st.number_input("რაოდენობა", min_value=0.0, step=1.0, format="%.2f", key=qty_key)
-                    qty2 = st.number_input("რაოდენობა 2", min_value=0.0, step=1.0, format="%.2f", key=qty2_key)
-                with pr_col:
-                    price = st.number_input("ერთ. ფასი (₾)", min_value=0.0, step=10.0, format="%.2f", key=pr_key)
-                with tot_col:
-                    total = qty * price
-                    total_rooms_amount += total
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    st.metric("ჯამური (₾)", f"{total:,.2f}")
-                with dl_col:
-                    delivery_dt = st.date_input("ჩაბარების თარიღი", value=room.get("delivery_date"),
-                                                key=dl_key, format="DD.MM.YYYY")
-                with del_col:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.button("🗑️ წაშლა", key=f"del_{selected_contract}_{row_id}"):
-                        row_to_delete = row_id
-
-                updated_rooms.append({
-                    "id": row_id,
-                    "room_code": r_code,
-                    "furniture_type": f_type,
-                    "unit": unit,
-                    "quantity": qty,
-                    "unit_price": price,
-                    "total_price": total,
-                    "delivery_date": delivery_dt,
-                    "unit2": unit2,
-                    "quantity2": qty2,
-                })
-                st.markdown("---")
-
-            if row_to_delete is not None:
-                st.session_state[session_key] = [r for r in st.session_state[session_key] if r["id"] != row_to_delete]
-                for k in [f"rc_{selected_contract}_{row_to_delete}", f"ft_{selected_contract}_{row_to_delete}",
-                          f"un_{selected_contract}_{row_to_delete}", f"qty_{selected_contract}_{row_to_delete}",
-                          f"pr_{selected_contract}_{row_to_delete}", f"dl_{selected_contract}_{row_to_delete}",
-                          f"un2_{selected_contract}_{row_to_delete}", f"qty2_{selected_contract}_{row_to_delete}"]:
-                    if k in st.session_state:
-                        del st.session_state[k]
-                st.rerun()
-
-            remaining_amount = allowed_contract_amount - total_rooms_amount
-
-            st.markdown(
-                f"**პროდუქტების ჯამური ღირებულება:** `{total_rooms_amount:,.2f} ₾` / **დასაშვები ლიმიტი:** `{allowed_contract_amount:,.2f} ₾` / **ასათვისებელი დარჩენილი თანხა:** `{remaining_amount:,.2f} ₾`")
-
-            # ==================== 💰 ფინანსური ინფორმაცია ====================
-            st.markdown("---")
-            st.markdown("### 💰 ფინანსური ინფორმაცია")
-
-            # ბაზიდან ჩატვირთული გრაფიკი ამ ხელშეკრულებისთვის
-            plan_init = {}
-            if not plan_data.empty and 'contract_base' in plan_data.columns:
-                for _, pr_ in plan_data[plan_data['contract_base'] == selected_contract].iterrows():
-                    plan_init[int(pr_['stage_no'])] = (num(pr_.get('planned_amount')), to_date(pr_.get('planned_date')))
-
-            stages_key = f"fin_stages_{selected_contract}"
-            pay_list_key = f"fin_pay_{selected_contract}"
-
-            if stages_key not in st.session_state:
-                init_stages = existing_stages if existing_stages else (max(plan_init) if plan_init else 1)
-                st.session_state[stages_key] = min(max(int(init_stages), 1), MAX_STAGES)
-
-            if pay_list_key not in st.session_state:
-                loaded_pays = []
-                if not pay_data.empty and 'contract_base' in pay_data.columns:
-                    for _, p_ in pay_data[pay_data['contract_base'] == selected_contract].iterrows():
-                        loaded_pays.append({
-                            "id": str(uuid.uuid4()),
-                            "stage": int(p_['stage_no']),
-                            "amount": num(p_.get('amount')),
-                            "date": to_date(p_.get('paid_date')),
-                            "type": _txt(p_.get('payment_type')) or PAYMENT_TYPES[0],
-                        })
-                st.session_state[pay_list_key] = loaded_pays
-
-            n_stages = st.selectbox("რამდენ ეტაპად ხდება თანხის გადახდა?", list(range(1, MAX_STAGES + 1)),
-                                    key=stages_key)
-
-            plan_out = []  # [{"stage", "amount", "date"}]
-            payments_out = []  # [{"stage", "amount", "date", "type"}]
-            pay_to_delete = None
-            add_pay_stage = None
-
-            for n in range(1, n_stages + 1):
-                with st.container(border=True):
-                    plan_col, pay_col = st.columns([1.2, 3])
-
-                    # ---- მარცხენა მხარე: გრაფიკით გადასახდელი ნაწილი ----
-                    with plan_col:
-                        st.markdown(f"**გადასახდელი თანხის {STAGE_PART_TITLES[n]} ნაწილი**")
-                        pa_key = f"plan_amt_{selected_contract}_{n}"
-                        pd_key = f"plan_dt_{selected_contract}_{n}"
-                        if pa_key not in st.session_state:
-                            st.session_state[pa_key] = plan_init.get(n, (0.0, None))[0]
-                        planned_amt = st.number_input("თანხა (₾)", min_value=0.0, step=100.0, format="%.2f",
-                                                      key=pa_key)
-                        planned_dt = st.date_input("ჩარიცხვის თარიღი", value=plan_init.get(n, (0.0, None))[1],
-                                                  key=pd_key, format="DD.MM.YYYY")
-                    plan_out.append({"stage": n, "amount": planned_amt, "date": planned_dt})
-
-                    # ---- მარჯვენა მხარე: ბუღალტრის სამუშაო ველი ----
-                    with pay_col:
-                        st.markdown("**🧾 ბუღალტერია - ფაქტიური ჩარიცხვები**")
-                        stage_pays = [p for p in st.session_state[pay_list_key] if p["stage"] == n]
-                        for p in stage_pays:
-                            pid = p["id"]
-                            pamt_key = f"payamt_{selected_contract}_{pid}"
-                            pdt_key = f"paydt_{selected_contract}_{pid}"
-                            ptp_key = f"paytp_{selected_contract}_{pid}"
-                            if pamt_key not in st.session_state:
-                                st.session_state[pamt_key] = float(p["amount"])
-                            if ptp_key not in st.session_state:
-                                st.session_state[ptp_key] = p["type"] if p["type"] in PAYMENT_TYPES else \
-                                    PAYMENT_TYPES[0]
-
-                            a_col, d_col, t_col, x_col = st.columns([1.2, 1.2, 1.2, 0.5])
-                            with a_col:
-                                p_amt = st.number_input("თანხა (₾)", min_value=0.0, step=100.0, format="%.2f",
-                                                        key=pamt_key)
-                            with d_col:
-                                p_dt = st.date_input("თარიღი", value=p["date"], key=pdt_key, format="DD.MM.YYYY")
-                            with t_col:
-                                p_tp = st.selectbox("ტიპი", PAYMENT_TYPES, key=ptp_key)
-                            with x_col:
-                                st.markdown("<br>", unsafe_allow_html=True)
-                                if st.button("🗑️", key=f"paydel_{selected_contract}_{pid}"):
-                                    pay_to_delete = pid
-                            payments_out.append({"stage": n, "amount": p_amt, "date": p_dt, "type": p_tp})
-
-                        if st.button("➕ ჩარიცხვის დამატება", key=f"payadd_{selected_contract}_{n}"):
-                            add_pay_stage = n
-
-            # "+" ღილაკი -> ახალი ჩარიცხვის სტრიქონი
-            if add_pay_stage is not None:
-                st.session_state[pay_list_key].append({
-                    "id": str(uuid.uuid4()),
-                    "stage": add_pay_stage,
-                    "amount": 0.0,
-                    "date": TODAY,
-                    "type": PAYMENT_TYPES[0],
-                })
-                st.rerun()
-
-            # ჩარიცხვის წაშლა
-            if pay_to_delete is not None:
-                st.session_state[pay_list_key] = [p for p in st.session_state[pay_list_key]
-                                                  if p["id"] != pay_to_delete]
-                for k in [f"payamt_{selected_contract}_{pay_to_delete}", f"paydt_{selected_contract}_{pay_to_delete}",
-                          f"paytp_{selected_contract}_{pay_to_delete}"]:
-                    if k in st.session_state:
-                        del st.session_state[k]
-                st.rerun()
-
-            # ---- გადანაწილების შეტყობინება ----
-            planned_total = sum(x["amount"] for x in plan_out)
-            if allowed_contract_amount > 0:
-                diff = allowed_contract_amount - planned_total
-                if abs(diff) < 0.005:
-                    st.success(
-                        f"✅ {allowed_contract_amount:,.2f} ₾ ღირებულების ხელშეკრულებიდან {planned_total:,.2f} ₾ "
-                        f"სრულად გადანაწილებულია {n_stages} ტრანშში.")
-                elif diff > 0:
-                    st.warning(
-                        f"⚠️ {allowed_contract_amount:,.2f} ₾ ღირებულების ხელშეკრულებიდან გადანაწილებულია "
-                        f"{planned_total:,.2f} ₾. გადასანაწილებელი დარჩა: {diff:,.2f} ₾.")
-                else:
-                    st.error(
-                        f"❌ გადანაწილებული თანხა ({planned_total:,.2f} ₾) აჭარბებს ხელშეკრულების თანხას "
-                        f"({allowed_contract_amount:,.2f} ₾) {-diff:,.2f} ₾-ით.")
-            else:
-                st.info("ℹ️ ხელშეკრულების თანხა ვერ განისაზღვრა (დაკონტრაქტების ჩანაწერის თანხა 0-ია).")
-
-            paid_total = sum(x["amount"] for x in payments_out)
-
-            # ---- შემაჯამებელი ცხრილი (ცოცხლად ახლდება) ----
-            st.markdown("##### 📊 გადახდების შემაჯამებელი ცხრილი")
-
-            fin_cols = [("", "პროექტი / სახელი"), ("", "ჯამური პროექტის თანხა"),
-                        ("", "გადახდილი თანხა"), ("", "დარჩენილი თანხა")]
-            for s in range(1, MAX_STAGES + 1):
-                fin_cols.append((STAGE_HEADERS[s], "თანხა (გრაფიკით)"))
-                fin_cols.append((STAGE_HEADERS[s], "თანხა (ფაქტიური)"))
-
-            left_amount = allowed_contract_amount - paid_total
-            project_label = f"{selected_contract} - {manual_client_fullname}".strip(" -")
-            fin_row = [
-                project_label,
-                fmt_money(allowed_contract_amount),
-                fmt_money(paid_total) if paid_total else "-",
-                fmt_money(left_amount) if abs(left_amount) >= 0.005 else "-",
-            ]
-            for s in range(1, MAX_STAGES + 1):
-                if s <= n_stages:
-                    s_plan = next((x["amount"] for x in plan_out if x["stage"] == s), 0.0)
-                    s_fact = sum(x["amount"] for x in payments_out if x["stage"] == s)
-                    fin_row.append(fmt_money(s_plan) if s_plan else "-")
-                    fin_row.append(fmt_money(s_fact) if s_fact else "-")
-                else:
-                    fin_row.append("")
-                    fin_row.append("")
-
-            fin_df = pd.DataFrame([fin_row], columns=pd.MultiIndex.from_tuples(fin_cols))
-            st.dataframe(fin_df, use_container_width=True, hide_index=True)
-            st.caption("ცხრილი ცოცხლად ახლდება. ბაზაში ჩასაწერად დააჭირეთ ქვემოთ „ცვლილებების შენახვა ბაზაში“.")
-
-            # შენახვის ღილაკი
-            if st.button("💾 ცვლილებების შენახვა ბაზაში", key=f"save_btn_{selected_contract}"):
-                _codes = [_txt(r['room_code']).strip() for r in updated_rooms if is_valid_code(r['room_code'])]
-                _dups = sorted({c for c in _codes if _codes.count(c) > 1})
-                _hidden_pays = [p for p in st.session_state[pay_list_key] if p["stage"] > n_stages]
-                if _dups:
-                    st.error(f"❌ ერთი და იგივე 6-ნიშნა კოდი განმეორებულია: {', '.join(_dups)}")
-                elif allowed_contract_amount > 0 and total_rooms_amount > allowed_contract_amount:
-                    st.error(
-                        f"❌ შეცდომა: პროდუქტების ჯამური თანხა ({total_rooms_amount:,.2f} ₾) აჭარბებს დაკონტრაქტების ლიმიტს ({allowed_contract_amount:,.2f} ₾)!")
-                elif allowed_contract_amount > 0 and planned_total > allowed_contract_amount + 0.005:
-                    st.error(
-                        f"❌ შეცდომა: გადახდის გრაფიკის ჯამი ({planned_total:,.2f} ₾) აჭარბებს ხელშეკრულების თანხას ({allowed_contract_amount:,.2f} ₾)!")
-                elif _hidden_pays:
-                    st.error(
-                        f"❌ ეტაპების რაოდენობა შემცირებულია, მაგრამ მოხსნილ ეტაპებზე უკვე არის ჩარიცხვები "
-                        f"({len(_hidden_pays)} ცალი). გაზარდეთ ეტაპების რაოდენობა ან ჯერ წაშალეთ ის ჩარიცხვები.")
-                else:
-                    conn = get_db_connection()
-                    if conn:
-                        try:
-                            cursor = conn.cursor()
-
-                            cursor.execute("""
-                                INSERT INTO customer_orders
-                                    (contract_base, client_fullname, client_id_code, phone, email, address, payment_stages)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (contract_base) DO UPDATE SET
-                                    client_fullname = EXCLUDED.client_fullname,
-                                    client_id_code = EXCLUDED.client_id_code,
-                                    phone = EXCLUDED.phone,
-                                    email = EXCLUDED.email,
-                                    address = EXCLUDED.address,
-                                    payment_stages = EXCLUDED.payment_stages
-                            """, (selected_contract, manual_client_fullname, manual_client_id_code, manual_phone,
-                                  manual_email, manual_address, n_stages))
-
-                            cursor.execute("DELETE FROM customer_order_rooms WHERE contract_base = %s",
-                                           (selected_contract,))
-                            for r in updated_rooms:
-                                cursor.execute("""
-                                    INSERT INTO customer_order_rooms
-                                        (contract_base, room_code, furniture_type, unit, quantity, unit_price, total_price,
-                                         delivery_date, unit2, quantity2)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                """, (selected_contract, r['room_code'], r['furniture_type'], r['unit'], r['quantity'],
-                                      r['unit_price'], r['total_price'], r['delivery_date'], r['unit2'],
-                                      r['quantity2']))
-
-                            cursor.execute("DELETE FROM customer_order_payment_plan WHERE contract_base = %s",
-                                           (selected_contract,))
-                            for x in plan_out:
-                                cursor.execute("""
-                                    INSERT INTO customer_order_payment_plan
-                                        (contract_base, stage_no, planned_amount, planned_date)
-                                    VALUES (%s, %s, %s, %s)
-                                """, (selected_contract, x['stage'], x['amount'], x['date']))
-
-                            cursor.execute("DELETE FROM customer_order_payments WHERE contract_base = %s",
-                                           (selected_contract,))
-                            for x in payments_out:
-                                if x['amount'] > 0:
-                                    cursor.execute("""
-                                        INSERT INTO customer_order_payments
-                                            (contract_base, stage_no, amount, paid_date, payment_type)
-                                        VALUES (%s, %s, %s, %s, %s)
-                                    """, (selected_contract, x['stage'], x['amount'], x['date'], x['type']))
-
-                            conn.commit()
-                            cursor.close()
-                            conn.close()
-                            st.success("✅ დამკვეთის, პროდუქტების და ფინანსური მონაცემები წარმატებით შეინახა ბაზაში!")
-                        except Exception as ex:
-                            try:
-                                conn.rollback()
-                                conn.close()
-                            except Exception:
-                                pass
-                            st.error(f"შეცდომა შენახვისას: {ex}")
+            # ---------------- ⏰ ჩაბარების ვადის შეტყობინება (10 დღით ადრე) ----------------
+            due_soon = [r for r in root_rows if r["days_left"] is not None and r["days_left"] <= ALERT_DAYS]
+            due_soon.sort(key=lambda r: r["deadline"])
+            if due_soon:
+                lines = []
+                for r in due_soon:
+                    d = r["days_left"]
+                    date_txt = r["deadline"].strftime("%d.%m.%Y")
+                    who = f"**{r['root']}** ({r['client']})" if r["client"] else f"**{r['root']}**"
+                    if d < 0:
+                        lines.append(f"🔴 {who}: ჩაბარების ვადა **გადაცილებულია {-d} დღით** ({date_txt})")
+                    elif d == 0:
+                        lines.append(f"🔴 {who}: ჩაბარების ვადა **დღეს არის** ({date_txt})")
                     else:
-                        st.error("ბაზასთან კავშირი ვერ მოხერხდა.")
+                        lines.append(f"🟠 {who}: ჩაბარებამდე დარჩენილია **{d} დღე** ({date_txt})")
+                msg = f"⏰ **ჩაბარების ვადის შეხსენება** ({ALERT_DAYS} დღით ადრე):\n\n" + "\n\n".join(lines)
+                if min(r["days_left"] for r in due_soon) <= 0:
+                    st.error(msg)
+                else:
+                    st.warning(msg)
+
+            # ---------------- 🔢 6-ნიშნა კოდის შემოწმება ----------------
+            invalid_codes = {}
+            if not rooms_data.empty and 'contract_base' in rooms_data.columns:
+                for root in all_roots:
+                    rr = rooms_data[rooms_data['contract_base'] == root]
+                    if rr.empty:
+                        continue
+                    bad_count = int((~rr['room_code'].apply(is_valid_code)).sum())
+                    if bad_count:
+                        invalid_codes[root] = bad_count
+
+            if invalid_codes:
+                code_lines = ", ".join([f"**{root}** ({cnt} პროდუქტი)" for root, cnt in invalid_codes.items()])
+                st.error(
+                    f"🔢 **6-ნიშნა ინდივიდუალური კოდი ჩაწერილი არ არის** (ან არ არის 6 ციფრი) შემდეგ ხელშეკრულებებზე. "
+                    f"გთხოვთ ჩაწეროთ: {code_lines}")
+
+            # ---------------- 🔔 შეუვსებელი პროდუქტები ----------------
+            unfilled_projects = []
+            for root in all_roots:
+                rooms_count = 0
+                if not rooms_data.empty and 'contract_base' in rooms_data.columns:
+                    rooms_count = len(rooms_data[rooms_data['contract_base'] == root])
+                if rooms_count == 0:
+                    unfilled_projects.append(root)
+
+            if unfilled_projects:
+                unfilled_str = ", ".join([f"**{p}**" for p in unfilled_projects])
+                st.error(
+                    f"🔢 **6-ნიშნა კოდი ჩაწერილი არ არის!** შემდეგ ხელშეკრულებებზე პროდუქტები ჯერ არ არის ჩაშლილი. "
+                    f"გთხოვთ ჩაშალოთ პროდუქტებად და თითოეულს ჩაუწეროთ 6-ნიშნა კოდი (მაგ. 001546): {unfilled_str}")
+
+            # ---------------- 📋 რეესტრი ----------------
+            st.subheader("📋 აქტიური დაკონტრაქტებული ხელშეკრულებების რეესტრი (მთავარი ნომრები)")
+
+            grouped_summary = pd.DataFrame([{
+                'ხელშეკრულების N': r["root"],
+                'სტატუსი': "✅ დასრულებული" if r["done"] else "🛠️ მიმდინარე",
+                'დიზაინერი': r["designer"],
+                'დამკვეთი': r["client"],
+                'პროდუქციის ტიპი': r["product"],
+                'პროექტის წყარო': r["source"],
+                'კატეგორია': r["category"],
+                'ჩაბარების ვადა': r["deadline"].strftime("%d.%m.%Y") if r["deadline"] else "-",
+                'დარჩენილი დღე': r["days_left"] if r["days_left"] is not None else "-",
+                'ჯამური თანხა': r["amount"],
+            } for r in root_rows])
+            grouped_summary.index = range(1, len(grouped_summary) + 1)
+
+            styled_grouped = grouped_summary.style.format({
+                'ჯამური თანხა': lambda x: f"{x:,.2f}" if pd.notnull(x) else "-"
+            }).set_properties(**{'text-align': 'left'})
+
+            st.dataframe(styled_grouped, use_container_width=True)
+
+            st.markdown("---")
+            st.subheader("⚙️ შეკვეთის დეტალიზაცია და პროდუქტების დეტალური ჩაშლა")
+
+            selected_contract = st.selectbox("აირჩიეთ ხელშეკრულების ძირითადი ნომერი:", all_roots)
+
+            if selected_contract:
+                sub_contracts = designers_data[designers_data['root_contract'] == selected_contract].copy()
+
+                st.write(f"**არჩეული ხელშეკრულების ყველა კომპონენტი ({selected_contract}):**")
+
+                sub_contracts['status_display'] = sub_contracts['project_status'].apply(
+                    lambda x: "✅ დასრულებული" if x == STATUS_DONE else "🛠️ მიმდინარე")
+                sub_contracts['file_display'] = sub_contracts['has_file'].apply(
+                    lambda x: "✅ ატვირთულია" if x else "❌ არ არის") if 'has_file' in sub_contracts.columns else "-"
+
+                detail_columns = [
+                    ('status_display', 'სტატუსი'),
+                    ('created_at', 'შექმნის თარიღი'),
+                    ('project_source', 'პროექტის წყარო'),
+                    ('contract_type', 'ხელშეკრულების ტიპი'),
+                    ('contract_no', 'ხელშეკრულების №'),
+                    ('project_category', 'პროექტის კატეგორია'),
+                    ('client_name', 'დამკვეთი'),
+                    ('product_type', 'პროდუქციის ტიპი'),
+                    ('amount', 'თანხა'),
+                    ('designer_name', 'დიზაინერი'),
+                    ('delivery_date_str', 'ჩაბარების თარიღი'),
+                    ('outsource_designer_name', 'Outsource დიზაინერი'),
+                    ('outsource_contract_no', 'Outsource ხელშეკრულების №'),
+                    ('outsource_commission_pct', 'Outsource საკომისიო'),
+                    ('outsource_installments', 'ნაწილების რ-ბა'),
+                    ('file_display', 'ფაილი'),
+                ]
+                detail_columns = [(src, dst) for src, dst in detail_columns if src in sub_contracts.columns]
+                sub_view = sub_contracts[[src for src, _ in detail_columns]].copy()
+                sub_view.columns = [dst for _, dst in detail_columns]
+
+                # Outsource სვეტები ჩანს მხოლოდ მაშინ, თუ ამ ხელშეკრულებაში Outsource პროექტია
+                if 'Outsource დიზაინერი' in sub_view.columns and sub_view['Outsource დიზაინერი'].isna().all():
+                    sub_view = sub_view.drop(columns=[c for c in
+                                                      ['Outsource დიზაინერი', 'Outsource ხელშეკრულების №',
+                                                       'Outsource საკომისიო', 'ნაწილების რ-ბა'] if c in sub_view.columns])
+                if 'Outsource საკომისიო' in sub_view.columns:
+                    sub_view['Outsource საკომისიო'] = sub_view['Outsource საკომისიო'].apply(
+                        lambda x: f"{float(x) * 100:.2f}%" if pd.notnull(x) else "-")
+                sub_view.index = range(1, len(sub_view) + 1)
+
+                styled_sub_contracts = sub_view.style.format({
+                    'თანხა': lambda x: f"{x:,.2f}" if pd.notnull(x) else "-"
+                }, na_rep="-").set_properties(**{'text-align': 'left'})
+
+                st.dataframe(styled_sub_contracts, use_container_width=True)
+
+                sub_contracts_filtered = designers_data[(designers_data['root_contract'] == selected_contract) & (
+                        designers_data['contract_type'] == "დაკონტრაქტება")]
+                allowed_contract_amount = sub_contracts_filtered[
+                    'amount'].sum() if not sub_contracts_filtered.empty else 0.0
+
+                st.info(
+                    f"💡 ამ ხელშეკრულების მიხედვით დასაკონტრაქტებელი (საწარმოო) ლიმიტი არის: **{allowed_contract_amount:,.2f} ₾** (დიზაინის თანხა გამოკლებულია)")
+
+                existing_client_fullname = client_by_root.get(selected_contract, "")
+                existing_client_id_code = ""
+                existing_contact = ""
+                existing_phone = ""
+                existing_email = ""
+                existing_address = ""
+                existing_stages = None
+
+                if not orders_data.empty and 'contract_base' in orders_data.columns:
+                    match_row = orders_data[orders_data['contract_base'] == selected_contract]
+                    if not match_row.empty:
+                        if pd.notna(match_row.iloc[0].get('client_fullname')):
+                            existing_client_fullname = match_row.iloc[0]['client_fullname']
+                        existing_client_id_code = _txt(match_row.iloc[0].get('client_id_code'))
+                        existing_contact = _txt(match_row.iloc[0].get('contact_person'))
+                        existing_phone = _txt(match_row.iloc[0].get('phone'))
+                        existing_email = _txt(match_row.iloc[0].get('email'))
+                        existing_address = _txt(match_row.iloc[0].get('address'))
+                        _st = match_row.iloc[0].get('payment_stages')
+                        if _st is not None and pd.notna(_st):
+                            existing_stages = int(_st)
+
+                # დამკვეთისა და საკონტაქტო მონაცემები
+                st.markdown(f"### დამკვეთისა და საკონტაქტო მონაცემები: {selected_contract}")
+                col1, col2 = st.columns(2)
+                with col1:
+                    manual_client_fullname = st.text_input("დამკვეთი", value=existing_client_fullname,
+                                                           key=f"client_fn_{selected_contract}")
+                    manual_client_id_code = st.text_input("პ/ნ ან საიდენტიფიკაციო კოდი", value=existing_client_id_code,
+                                                          key=f"client_idc_{selected_contract}")
+                    manual_contact_person = st.text_input("საკონტაქტო პირი", value=existing_contact,
+                                                          key=f"contact_{selected_contract}")
+                    manual_phone = st.text_input("Tel (საკონტაქტო ნომერი)", value=existing_phone,
+                                                 key=f"phone_{selected_contract}")
+                with col2:
+                    manual_email = st.text_input("E-mail", value=existing_email, key=f"email_{selected_contract}")
+                    manual_address = st.text_input("მისამართი", value=existing_address, key=f"addr_{selected_contract}")
+
+                st.markdown("---")
+                st.markdown("#### 🗄️ პროდუქტების დეტალური ჩაშლა")
+
+                # სესიის ინიციალიზაცია პროდუქტებისთვის
+                session_key = f"rooms_list_{selected_contract}"
+                if session_key not in st.session_state:
+                    loaded_list = []
+                    if not rooms_data.empty and 'contract_base' in rooms_data.columns:
+                        existing_rooms = rooms_data[rooms_data['contract_base'] == selected_contract]
+                        for _, r in existing_rooms.iterrows():
+                            loaded_list.append({
+                                "id": str(uuid.uuid4()),
+                                "room_code": _txt(r.get("room_code")),
+                                "furniture_type": _txt(r.get("furniture_type")),
+                                "unit": _txt(r.get("unit")) or "კვ. მ.",
+                                "quantity": num(r.get("quantity")),
+                                "total_price": num(r.get("total_price")) or (
+                                        num(r.get("quantity")) * num(r.get("unit_price"))),
+                                "delivery_date": to_date(r.get("delivery_date")),
+                                "unit2": _txt(r.get("unit2")) or "კვ. მ.",
+                                "quantity2": num(r.get("quantity2")),
+                            })
+                    st.session_state[session_key] = loaded_list
+
+                # ➕ ოთახის დამატების ღილაკი
+                if st.button("➕ პროდუქტის დამატება", key=f"add_room_btn_{selected_contract}"):
+                    st.session_state[session_key].append({
+                        "id": str(uuid.uuid4()),
+                        "room_code": "",
+                        "furniture_type": "",
+                        "unit": "კვ. მ.",
+                        "quantity": 0.0,
+                        "total_price": 0.0,
+                        "delivery_date": None,
+                        "unit2": "კვ. მ.",
+                        "quantity2": 0.0,
+                    })
+                    st.rerun()
+
+                updated_rooms = []
+                row_to_delete = None
+                total_rooms_amount = 0.0
+
+                for i, room in enumerate(st.session_state[session_key]):
+                    row_id = room["id"]
+                    st.markdown(f"**პროექტი #{i + 1}**")
+                    (rc_col, ft_col, un_col, qty_col, tot_col, pr_col, dl_col, del_col) = st.columns(
+                        [1.7, 1.7, 1.2, 1, 1.3, 1.2, 1.5, 0.8])
+
+                    rc_key = f"rc_{selected_contract}_{row_id}"
+                    ft_key = f"ft_{selected_contract}_{row_id}"
+                    un_key = f"un_{selected_contract}_{row_id}"
+                    qty_key = f"qty_{selected_contract}_{row_id}"
+                    tot_key = f"tot_{selected_contract}_{row_id}"
+                    dl_key = f"dl_{selected_contract}_{row_id}"
+                    un2_key = f"un2_{selected_contract}_{row_id}"
+                    qty2_key = f"qty2_{selected_contract}_{row_id}"
+
+                    if un2_key not in st.session_state:
+                        st.session_state[un2_key] = room.get("unit2") or "კვ. მ."
+                    if qty2_key not in st.session_state:
+                        st.session_state[qty2_key] = float(room.get("quantity2", 0.0))
+                    if rc_key not in st.session_state:
+                        st.session_state[rc_key] = room.get("room_code", "")
+                    if ft_key not in st.session_state:
+                        st.session_state[ft_key] = room.get("furniture_type", "")
+                    if un_key not in st.session_state:
+                        st.session_state[un_key] = room.get("unit", "კვ. მ.")
+                    if qty_key not in st.session_state:
+                        st.session_state[qty_key] = float(room.get("quantity", 0.0))
+                    if tot_key not in st.session_state:
+                        st.session_state[tot_key] = float(room.get("total_price", 0.0))
+
+                    with rc_col:
+                        r_code = st.text_input("ინდივიდუალური კოდი (6 ციფრი)", key=rc_key, max_chars=6)
+                        if not is_valid_code(r_code):
+                            st.caption("⚠️ ჩაწერეთ 6-ნიშნა კოდი")
+                    with ft_col:
+                        f_type = st.text_input("პროდუქტის ტიპი", key=ft_key)
+                    with un_col:
+                        unit_opts = ["კვ. მ.", "გრძ. მ.", "ცალი"]
+                        curr_unit = st.session_state[un_key]
+                        u_idx = unit_opts.index(curr_unit) if curr_unit in unit_opts else 0
+                        unit = st.selectbox("ერთეული", unit_opts, index=u_idx, key=un_key)
+                        unit2_opts = ["კვ. მ.", "გრძ. მ."]
+                        curr_unit2 = st.session_state[un2_key]
+                        u2_idx = unit2_opts.index(curr_unit2) if curr_unit2 in unit2_opts else 0
+                        unit2 = st.selectbox("ერთეული 2", unit2_opts, index=u2_idx, key=un2_key)
+                    with qty_col:
+                        qty = st.number_input("რაოდენობა", min_value=0.0, step=1.0, format="%.2f", key=qty_key)
+                        qty2 = st.number_input("რაოდენობა 2", min_value=0.0, step=1.0, format="%.2f", key=qty2_key)
+                    with tot_col:
+                        total = st.number_input("ჯამური თანხა (₾)", min_value=0.0, step=100.0, format="%.2f",
+                                                key=tot_key)
+                        total_rooms_amount += total
+                    with pr_col:
+                        # ერთეულის ფასი ავტომატურად: ჯამური თანხა / რაოდენობა
+                        price = total / qty if qty > 0 else 0.0
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        st.metric("ერთ. ფასი (₾)", f"{price:,.2f}" if qty > 0 else "-")
+                    with dl_col:
+                        delivery_dt = st.date_input("ჩაბარების თარიღი", value=room.get("delivery_date"),
+                                                    key=dl_key, format="DD.MM.YYYY")
+                    with del_col:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button("🗑️ წაშლა", key=f"del_{selected_contract}_{row_id}"):
+                            row_to_delete = row_id
+
+                    updated_rooms.append({
+                        "id": row_id,
+                        "room_code": r_code,
+                        "furniture_type": f_type,
+                        "unit": unit,
+                        "quantity": qty,
+                        "unit_price": price,
+                        "total_price": total,
+                        "delivery_date": delivery_dt,
+                        "unit2": unit2,
+                        "quantity2": qty2,
+                    })
+                    st.markdown("---")
+
+                if row_to_delete is not None:
+                    st.session_state[session_key] = [r for r in st.session_state[session_key] if r["id"] != row_to_delete]
+                    for k in [f"rc_{selected_contract}_{row_to_delete}", f"ft_{selected_contract}_{row_to_delete}",
+                              f"un_{selected_contract}_{row_to_delete}", f"qty_{selected_contract}_{row_to_delete}",
+                              f"tot_{selected_contract}_{row_to_delete}", f"dl_{selected_contract}_{row_to_delete}",
+                              f"un2_{selected_contract}_{row_to_delete}", f"qty2_{selected_contract}_{row_to_delete}"]:
+                        if k in st.session_state:
+                            del st.session_state[k]
+                    st.rerun()
+
+                remaining_amount = allowed_contract_amount - total_rooms_amount
+
+                st.markdown(
+                    f"**პროდუქტების ჯამური ღირებულება:** `{total_rooms_amount:,.2f} ₾` / **დასაშვები ლიმიტი:** `{allowed_contract_amount:,.2f} ₾` / **ასათვისებელი დარჩენილი თანხა:** `{remaining_amount:,.2f} ₾`")
+
+                # ==================== 💰 ფინანსური ინფორმაცია ====================
+                st.markdown("---")
+                st.markdown("### 💰 ფინანსური ინფორმაცია")
+
+                # ბაზიდან ჩატვირთული გრაფიკი ამ ხელშეკრულებისთვის
+                plan_init = {}
+                if not plan_data.empty and 'contract_base' in plan_data.columns:
+                    for _, pr_ in plan_data[plan_data['contract_base'] == selected_contract].iterrows():
+                        plan_init[int(pr_['stage_no'])] = (num(pr_.get('planned_amount')), to_date(pr_.get('planned_date')))
+
+                stages_key = f"fin_stages_{selected_contract}"
+                pay_list_key = f"fin_pay_{selected_contract}"
+
+                if stages_key not in st.session_state:
+                    init_stages = existing_stages if existing_stages else (max(plan_init) if plan_init else 1)
+                    st.session_state[stages_key] = min(max(int(init_stages), 1), MAX_STAGES)
+
+                if pay_list_key not in st.session_state:
+                    loaded_pays = []
+                    if not pay_data.empty and 'contract_base' in pay_data.columns:
+                        for _, p_ in pay_data[pay_data['contract_base'] == selected_contract].iterrows():
+                            loaded_pays.append({
+                                "id": str(uuid.uuid4()),
+                                "stage": int(p_['stage_no']),
+                                "amount": num(p_.get('amount')),
+                                "date": to_date(p_.get('paid_date')),
+                                "type": _txt(p_.get('payment_type')) or PAYMENT_TYPES[0],
+                            })
+                    st.session_state[pay_list_key] = loaded_pays
+
+                n_stages = st.selectbox("რამდენ ეტაპად ხდება თანხის გადახდა?", list(range(1, MAX_STAGES + 1)),
+                                        key=stages_key)
+
+                plan_out = []  # [{"stage", "amount", "date"}]
+                payments_out = []  # [{"stage", "amount", "date", "type"}]
+                pay_to_delete = None
+                add_pay_stage = None
+
+                for n in range(1, n_stages + 1):
+                    with st.container(border=True):
+                        plan_col, pay_col = st.columns([1.2, 3])
+
+                        # ---- მარცხენა მხარე: გრაფიკით გადასახდელი ნაწილი ----
+                        with plan_col:
+                            st.markdown(f"**გადასახდელი თანხის {STAGE_PART_TITLES[n]} ნაწილი**")
+                            pa_key = f"plan_amt_{selected_contract}_{n}"
+                            pd_key = f"plan_dt_{selected_contract}_{n}"
+                            if pa_key not in st.session_state:
+                                st.session_state[pa_key] = plan_init.get(n, (0.0, None))[0]
+                            planned_amt = st.number_input("თანხა (₾)", min_value=0.0, step=100.0, format="%.2f",
+                                                          key=pa_key)
+                            planned_dt = st.date_input("ჩარიცხვის თარიღი", value=plan_init.get(n, (0.0, None))[1],
+                                                      key=pd_key, format="DD.MM.YYYY")
+                        plan_out.append({"stage": n, "amount": planned_amt, "date": planned_dt})
+
+                        # ---- მარჯვენა მხარე: ბუღალტრის სამუშაო ველი ----
+                        with pay_col:
+                            st.markdown("**🧾 ბუღალტერია - ფაქტიური ჩარიცხვები**")
+                            stage_pays = [p for p in st.session_state[pay_list_key] if p["stage"] == n]
+                            for p in stage_pays:
+                                pid = p["id"]
+                                pamt_key = f"payamt_{selected_contract}_{pid}"
+                                pdt_key = f"paydt_{selected_contract}_{pid}"
+                                ptp_key = f"paytp_{selected_contract}_{pid}"
+                                if pamt_key not in st.session_state:
+                                    st.session_state[pamt_key] = float(p["amount"])
+                                if ptp_key not in st.session_state:
+                                    st.session_state[ptp_key] = p["type"] if p["type"] in PAYMENT_TYPES else \
+                                        PAYMENT_TYPES[0]
+
+                                a_col, d_col, t_col, x_col = st.columns([1.2, 1.2, 1.2, 0.5])
+                                with a_col:
+                                    p_amt = st.number_input("თანხა (₾)", min_value=0.0, step=100.0, format="%.2f",
+                                                            key=pamt_key)
+                                with d_col:
+                                    p_dt = st.date_input("თარიღი", value=p["date"], key=pdt_key, format="DD.MM.YYYY")
+                                with t_col:
+                                    p_tp = st.selectbox("ტიპი", PAYMENT_TYPES, key=ptp_key)
+                                with x_col:
+                                    st.markdown("<br>", unsafe_allow_html=True)
+                                    if st.button("🗑️", key=f"paydel_{selected_contract}_{pid}"):
+                                        pay_to_delete = pid
+                                payments_out.append({"stage": n, "amount": p_amt, "date": p_dt, "type": p_tp})
+
+                            if st.button("➕ ჩარიცხვის დამატება", key=f"payadd_{selected_contract}_{n}"):
+                                add_pay_stage = n
+
+                # "+" ღილაკი -> ახალი ჩარიცხვის სტრიქონი
+                if add_pay_stage is not None:
+                    st.session_state[pay_list_key].append({
+                        "id": str(uuid.uuid4()),
+                        "stage": add_pay_stage,
+                        "amount": 0.0,
+                        "date": TODAY,
+                        "type": PAYMENT_TYPES[0],
+                    })
+                    st.rerun()
+
+                # ჩარიცხვის წაშლა
+                if pay_to_delete is not None:
+                    st.session_state[pay_list_key] = [p for p in st.session_state[pay_list_key]
+                                                      if p["id"] != pay_to_delete]
+                    for k in [f"payamt_{selected_contract}_{pay_to_delete}", f"paydt_{selected_contract}_{pay_to_delete}",
+                              f"paytp_{selected_contract}_{pay_to_delete}"]:
+                        if k in st.session_state:
+                            del st.session_state[k]
+                    st.rerun()
+
+                # ---- გადანაწილების შეტყობინება ----
+                planned_total = sum(x["amount"] for x in plan_out)
+                if allowed_contract_amount > 0:
+                    diff = allowed_contract_amount - planned_total
+                    if abs(diff) < 0.005:
+                        st.success(
+                            f"✅ {allowed_contract_amount:,.2f} ₾ ღირებულების ხელშეკრულებიდან {planned_total:,.2f} ₾ "
+                            f"სრულად გადანაწილებულია {n_stages} ტრანშში.")
+                    elif diff > 0:
+                        st.warning(
+                            f"⚠️ {allowed_contract_amount:,.2f} ₾ ღირებულების ხელშეკრულებიდან გადანაწილებულია "
+                            f"{planned_total:,.2f} ₾. გადასანაწილებელი დარჩა: {diff:,.2f} ₾.")
+                    else:
+                        st.error(
+                            f"❌ გადანაწილებული თანხა ({planned_total:,.2f} ₾) აჭარბებს ხელშეკრულების თანხას "
+                            f"({allowed_contract_amount:,.2f} ₾) {-diff:,.2f} ₾-ით.")
+                else:
+                    st.info("ℹ️ ხელშეკრულების თანხა ვერ განისაზღვრა (დაკონტრაქტების ჩანაწერის თანხა 0-ია).")
+
+                paid_total = sum(x["amount"] for x in payments_out)
+
+                # ---- შემაჯამებელი ცხრილი (ცოცხლად ახლდება) ----
+                st.markdown("##### 📊 გადახდების შემაჯამებელი ცხრილი")
+
+                fin_cols = [("", "პროექტი / სახელი"), ("", "ჯამური პროექტის თანხა"),
+                            ("", "გადახდილი თანხა"), ("", "დარჩენილი თანხა")]
+                for s in range(1, MAX_STAGES + 1):
+                    fin_cols.append((STAGE_HEADERS[s], "თანხა (გრაფიკით)"))
+                    fin_cols.append((STAGE_HEADERS[s], "თანხა (ფაქტიური)"))
+
+                left_amount = allowed_contract_amount - paid_total
+                project_label = f"{selected_contract} - {manual_client_fullname}".strip(" -")
+                fin_row = [
+                    project_label,
+                    fmt_money(allowed_contract_amount),
+                    fmt_money(paid_total) if paid_total else "-",
+                    fmt_money(left_amount) if abs(left_amount) >= 0.005 else "-",
+                ]
+                for s in range(1, MAX_STAGES + 1):
+                    if s <= n_stages:
+                        s_plan = next((x["amount"] for x in plan_out if x["stage"] == s), 0.0)
+                        s_fact = sum(x["amount"] for x in payments_out if x["stage"] == s)
+                        fin_row.append(fmt_money(s_plan) if s_plan else "-")
+                        fin_row.append(fmt_money(s_fact) if s_fact else "-")
+                    else:
+                        fin_row.append("")
+                        fin_row.append("")
+
+                fin_df = pd.DataFrame([fin_row], columns=pd.MultiIndex.from_tuples(fin_cols))
+                st.dataframe(fin_df, use_container_width=True, hide_index=True)
+                st.caption("ცხრილი ცოცხლად ახლდება. ბაზაში ჩასაწერად დააჭირეთ ქვემოთ „ცვლილებების შენახვა ბაზაში“.")
+
+                # შენახვის ღილაკი
+                if st.button("💾 ცვლილებების შენახვა ბაზაში", key=f"save_btn_{selected_contract}"):
+                    _codes = [_txt(r['room_code']).strip() for r in updated_rooms if is_valid_code(r['room_code'])]
+                    _dups = sorted({c for c in _codes if _codes.count(c) > 1})
+                    _hidden_pays = [p for p in st.session_state[pay_list_key] if p["stage"] > n_stages]
+                    if _dups:
+                        st.error(f"❌ ერთი და იგივე 6-ნიშნა კოდი განმეორებულია: {', '.join(_dups)}")
+                    elif allowed_contract_amount > 0 and total_rooms_amount > allowed_contract_amount:
+                        st.error(
+                            f"❌ შეცდომა: პროდუქტების ჯამური თანხა ({total_rooms_amount:,.2f} ₾) აჭარბებს დაკონტრაქტების ლიმიტს ({allowed_contract_amount:,.2f} ₾)!")
+                    elif allowed_contract_amount > 0 and planned_total > allowed_contract_amount + 0.005:
+                        st.error(
+                            f"❌ შეცდომა: გადახდის გრაფიკის ჯამი ({planned_total:,.2f} ₾) აჭარბებს ხელშეკრულების თანხას ({allowed_contract_amount:,.2f} ₾)!")
+                    elif _hidden_pays:
+                        st.error(
+                            f"❌ ეტაპების რაოდენობა შემცირებულია, მაგრამ მოხსნილ ეტაპებზე უკვე არის ჩარიცხვები "
+                            f"({len(_hidden_pays)} ცალი). გაზარდეთ ეტაპების რაოდენობა ან ჯერ წაშალეთ ის ჩარიცხვები.")
+                    else:
+                        conn = get_db_connection()
+                        if conn:
+                            try:
+                                cursor = conn.cursor()
+
+                                cursor.execute("""
+                                    INSERT INTO customer_orders
+                                        (contract_base, client_fullname, client_id_code, contact_person, phone, email, address, payment_stages)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                    ON CONFLICT (contract_base) DO UPDATE SET
+                                        client_fullname = EXCLUDED.client_fullname,
+                                        client_id_code = EXCLUDED.client_id_code,
+                                        contact_person = EXCLUDED.contact_person,
+                                        phone = EXCLUDED.phone,
+                                        email = EXCLUDED.email,
+                                        address = EXCLUDED.address,
+                                        payment_stages = EXCLUDED.payment_stages
+                                """, (selected_contract, manual_client_fullname, manual_client_id_code, manual_contact_person, manual_phone,
+                                      manual_email, manual_address, n_stages))
+
+                                cursor.execute("DELETE FROM customer_order_rooms WHERE contract_base = %s",
+                                               (selected_contract,))
+                                for r in updated_rooms:
+                                    cursor.execute("""
+                                        INSERT INTO customer_order_rooms
+                                            (contract_base, room_code, furniture_type, unit, quantity, unit_price, total_price,
+                                             delivery_date, unit2, quantity2)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    """, (selected_contract, r['room_code'], r['furniture_type'], r['unit'], r['quantity'],
+                                          r['unit_price'], r['total_price'], r['delivery_date'], r['unit2'],
+                                          r['quantity2']))
+
+                                cursor.execute("DELETE FROM customer_order_payment_plan WHERE contract_base = %s",
+                                               (selected_contract,))
+                                for x in plan_out:
+                                    cursor.execute("""
+                                        INSERT INTO customer_order_payment_plan
+                                            (contract_base, stage_no, planned_amount, planned_date)
+                                        VALUES (%s, %s, %s, %s)
+                                    """, (selected_contract, x['stage'], x['amount'], x['date']))
+
+                                cursor.execute("DELETE FROM customer_order_payments WHERE contract_base = %s",
+                                               (selected_contract,))
+                                for x in payments_out:
+                                    if x['amount'] > 0:
+                                        cursor.execute("""
+                                            INSERT INTO customer_order_payments
+                                                (contract_base, stage_no, amount, paid_date, payment_type)
+                                            VALUES (%s, %s, %s, %s, %s)
+                                        """, (selected_contract, x['stage'], x['amount'], x['date'], x['type']))
+
+                                conn.commit()
+                                cursor.close()
+                                conn.close()
+                                st.success("✅ დამკვეთის, პროდუქტების და ფინანსური მონაცემები წარმატებით შეინახა ბაზაში!")
+                            except Exception as ex:
+                                try:
+                                    conn.rollback()
+                                    conn.close()
+                                except Exception:
+                                    pass
+                                st.error(f"შეცდომა შენახვისას: {ex}")
+                        else:
+                            st.error("ბაზასთან კავშირი ვერ მოხერხდა.")
+
+with tab_orders:
+    render_orders_tab(plan_data, pay_data, orders_data, designers_data)
