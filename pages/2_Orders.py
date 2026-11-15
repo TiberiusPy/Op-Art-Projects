@@ -596,8 +596,9 @@ with tab_main:
                                 "furniture_type": _txt(r.get("furniture_type")),
                                 "unit": _txt(r.get("unit")) or "კვ. მ.",
                                 "quantity": num(r.get("quantity")),
-                                "total_price": num(r.get("total_price")) or (
-                                        num(r.get("quantity")) * num(r.get("unit_price"))),
+                                "unit_price": num(r.get("unit_price")) or (
+                                    num(r.get("total_price")) / num(r.get("quantity"))
+                                    if num(r.get("quantity")) > 0 else 0.0),
                                 "delivery_date": to_date(r.get("delivery_date")),
                                 "unit2": _txt(r.get("unit2")) or "კვ. მ.",
                                 "quantity2": num(r.get("quantity2")),
@@ -612,7 +613,7 @@ with tab_main:
                         "furniture_type": "",
                         "unit": "კვ. მ.",
                         "quantity": 0.0,
-                        "total_price": 0.0,
+                        "unit_price": 0.0,
                         "delivery_date": None,
                         "unit2": "კვ. მ.",
                         "quantity2": 0.0,
@@ -626,14 +627,14 @@ with tab_main:
                 for i, room in enumerate(st.session_state[session_key]):
                     row_id = room["id"]
                     st.markdown(f"**პროექტი #{i + 1}**")
-                    (rc_col, ft_col, un_col, qty_col, tot_col, pr_col, dl_col, del_col) = st.columns(
+                    (rc_col, ft_col, un_col, qty_col, pr_col, tot_col, dl_col, del_col) = st.columns(
                         [1.7, 1.7, 1.2, 1, 1.3, 1.2, 1.5, 0.8])
 
                     rc_key = f"rc_{selected_contract}_{row_id}"
                     ft_key = f"ft_{selected_contract}_{row_id}"
                     un_key = f"un_{selected_contract}_{row_id}"
                     qty_key = f"qty_{selected_contract}_{row_id}"
-                    tot_key = f"tot_{selected_contract}_{row_id}"
+                    pr_key = f"pr_{selected_contract}_{row_id}"
                     dl_key = f"dl_{selected_contract}_{row_id}"
                     un2_key = f"un2_{selected_contract}_{row_id}"
                     qty2_key = f"qty2_{selected_contract}_{row_id}"
@@ -650,8 +651,8 @@ with tab_main:
                         st.session_state[un_key] = room.get("unit", "კვ. მ.")
                     if qty_key not in st.session_state:
                         st.session_state[qty_key] = float(room.get("quantity", 0.0))
-                    if tot_key not in st.session_state:
-                        st.session_state[tot_key] = float(room.get("total_price", 0.0))
+                    if pr_key not in st.session_state:
+                        st.session_state[pr_key] = float(room.get("unit_price", 0.0))
 
                     with rc_col:
                         r_code = st.text_input("ინდივიდუალური კოდი (6 ციფრი)", key=rc_key, max_chars=6)
@@ -671,15 +672,15 @@ with tab_main:
                     with qty_col:
                         qty = st.number_input("რაოდენობა", min_value=0.0, step=1.0, format="%.2f", key=qty_key)
                         qty2 = st.number_input("რაოდენობა 2", min_value=0.0, step=1.0, format="%.2f", key=qty2_key)
-                    with tot_col:
-                        total = st.number_input("ჯამური თანხა (₾)", min_value=0.0, step=100.0, format="%.2f",
-                                                key=tot_key)
-                        total_rooms_amount += total
                     with pr_col:
-                        # ერთეულის ფასი ავტომატურად: ჯამური თანხა / რაოდენობა
-                        price = total / qty if qty > 0 else 0.0
+                        price = st.number_input("ერთ. ფასი (₾)", min_value=0.0, step=10.0, format="%.2f",
+                                                key=pr_key)
+                    with tot_col:
+                        # ჯამური თანხა ავტომატურად: ერთ. ფასი × რაოდენობა
+                        total = qty * price
+                        total_rooms_amount += total
                         st.markdown("<br>", unsafe_allow_html=True)
-                        st.metric("ერთ. ფასი (₾)", f"{price:,.2f}" if qty > 0 else "-")
+                        st.metric("ჯამური თანხა (₾)", f"{total:,.2f}")
                     with dl_col:
                         delivery_dt = st.date_input("ჩაბარების თარიღი", value=room.get("delivery_date"),
                                                     key=dl_key, format="DD.MM.YYYY")
@@ -706,7 +707,7 @@ with tab_main:
                     st.session_state[session_key] = [r for r in st.session_state[session_key] if r["id"] != row_to_delete]
                     for k in [f"rc_{selected_contract}_{row_to_delete}", f"ft_{selected_contract}_{row_to_delete}",
                               f"un_{selected_contract}_{row_to_delete}", f"qty_{selected_contract}_{row_to_delete}",
-                              f"tot_{selected_contract}_{row_to_delete}", f"dl_{selected_contract}_{row_to_delete}",
+                              f"pr_{selected_contract}_{row_to_delete}", f"dl_{selected_contract}_{row_to_delete}",
                               f"un2_{selected_contract}_{row_to_delete}", f"qty2_{selected_contract}_{row_to_delete}"]:
                         if k in st.session_state:
                             del st.session_state[k]
